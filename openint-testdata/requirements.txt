@@ -1,0 +1,14 @@
+# Bank Test Data Requirements
+
+# Data generation
+faker>=20.0.0
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Data loading
+pymilvus>=2.3.0
+sentence-transformers>=2.2.0
+python-dotenv>=1.0.0
+
+# Utilities
+tqdm>=4.66.0  # Progress bars

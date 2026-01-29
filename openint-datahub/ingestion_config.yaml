@@ -1,0 +1,12 @@
+# path is relative to repo root when running from openint-datahub; or set absolute path
+source:
+  type: file
+  config:
+    path: testdata
+    file_type: csv
+    platform: openint
+    env: PROD
+sink:
+  type: datahub-rest
+  config:
+    server: http://localhost:9002

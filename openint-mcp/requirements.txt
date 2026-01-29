@@ -1,0 +1,4 @@
+# MCP server for OpenInt semantic layer
+# Python 3.10+
+mcp>=1.20.0
+requests>=2.28.0

@@ -1,0 +1,3 @@
+# OpenInt Graph - Neo4j client
+
+neo4j>=5.0.0

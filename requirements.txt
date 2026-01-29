@@ -1,0 +1,54 @@
+# Agentic AI Example Project Requirements
+# Python 3.8+
+
+# Core dependencies (minimal for basic example)
+# Add more as needed for your use case
+
+# For enhanced planning with LLMs (optional):
+# openai>=1.0.0
+# anthropic>=0.3.0
+# langchain>=0.1.0
+
+# For better data processing:
+# numpy>=1.24.0
+# pandas>=2.0.0
+
+# For web requests (if implementing real web search):
+# requests>=2.31.0
+
+# For testing:
+# pytest>=7.4.0
+# pytest-cov>=4.1.0
+
+# For development:
+# black>=23.0.0
+# flake8>=6.0.0
+# mypy>=1.5.0
+
+# For ChromaDB vector database:
+chromadb>=0.4.0
+python-dotenv
+
+# For Milvus vector database:
+pymilvus>=2.3.0
+sentence-transformers>=2.2.0
+
+# For web UI:
+flask>=3.0.0
+# For HTTPS (adhoc / self-signed certs in development):
+pyopenssl>=23.0.0
+
+# For document processing:
+PyPDF2>=3.0.0
+python-docx>=1.1.0
+python-pptx>=0.6.21
+openpyxl>=3.1.0
+pandas>=2.0.0
+# For audio transcription (optional - requires ffmpeg):
+# whisper-openai>=20231117
+# Or use speech_recognition for simpler audio:
+SpeechRecognition>=3.10.0
+pydub>=0.25.1
+
+# For test data generation:
+faker>=20.0.0

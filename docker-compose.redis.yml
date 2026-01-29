@@ -1,0 +1,23 @@
+# Redis for OpenInt backend: chat cache + model registry
+# Run: docker compose -f docker-compose.redis.yml up -d
+# Then set REDIS_HOST=127.0.0.1 (or host.docker.internal from another container) and REDIS_PORT=6379
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: openint-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      interval: 5s
+      retries: 3
+      start_period: 5s
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+    restart: unless-stopped
+
+volumes:
+  redis_data:

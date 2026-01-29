@@ -1,0 +1,96 @@
+# openInt System Architecture
+
+This document describes the multi-project architecture for the openInt system.
+
+## Project Structure
+
+```
+openint-alpha/
+├── openInt-ui-backend/          # UI & API Backend
+│   ├── frontend/            # React UI
+│   ├── backend/             # Flask/FastAPI backend
+│   └── README.md
+│
+├── openInt-testdata/           # Test Data Generation & Loading
+│   ├── generators/          # Data generation scripts
+│   ├── loaders/             # Data loading scripts
+│   └── README.md
+│
+├── openInt-agents/             # AI Agents System
+│   ├── agents/              # Individual agent implementations
+│   ├── communication/        # Agent communication framework
+│   ├── tools/               # Agent tools
+│   └── README.md
+│
+└── shared/                   # Shared utilities and contracts
+    ├── config/               # Shared configuration
+    ├── schemas/             # API schemas and contracts
+    └── utils/               # Shared utilities
+```
+
+## Project Responsibilities
+
+### openInt-ui-backend
+- **Purpose**: User interface and API backend
+- **Responsibilities**:
+  - React frontend for chat interface
+  - REST/GraphQL API endpoints
+  - WebSocket for real-time chat
+  - User session management
+  - API gateway to agent system
+
+### openInt-testdata
+- **Purpose**: Test data generation and loading
+- **Responsibilities**:
+  - Generate openInt test data (customers, transactions)
+  - Load data into Milvus/vector databases
+  - Data validation and quality checks
+  - Data migration scripts
+
+### openInt-agents
+- **Purpose**: AI agent system with multi-agent collaboration
+- **Responsibilities**:
+  - Agent implementations (search, analysis, recommendation)
+  - Agent communication framework
+  - Milvus integration for vector search
+  - Agent orchestration and coordination
+  - Tool system for agent capabilities
+
+## Agent Communication Framework
+
+Agents communicate through:
+1. **Message Bus**: Pub/sub system for agent communication
+2. **Agent Registry**: Discovery and routing of agents
+3. **Shared State**: Common state management
+4. **API Gateway**: External interface to agent system
+
+## Communication Flow
+
+```
+User Query
+    ↓
+UI Backend (openInt-ui-backend)
+    ↓
+API Gateway
+    ↓
+Agent Orchestrator (openInt-agents)
+    ↓
+┌─────────────┬─────────────┬─────────────┐
+│   Search    │  Analysis   │ Recommendation│
+│   Agent     │   Agent     │    Agent      │
+└─────────────┴─────────────┴─────────────┘
+    ↓              ↓              ↓
+Milvus Vector DB ← ─ ─ ─ ─ ─ ─ ─ ─ ┘
+    ↓
+Results Aggregation
+    ↓
+Response to User
+```
+
+## Technology Stack
+
+- **UI Backend**: React + Flask/FastAPI
+- **Agents**: Python with LangChain/autogen
+- **Vector DB**: Milvus
+- **Communication**: Redis/RabbitMQ for message bus
+- **API**: REST + WebSocket
