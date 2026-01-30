@@ -473,29 +473,94 @@ export interface GraphSampleResponse {
   error?: string;
 }
 
+async function parseGraphJson<T>(res: Response, fallbackError: string): Promise<{ data?: T; error: string }> {
+  const statusText = res.status === 404 ? 'Graph API not found. Is the backend running? Start it with ./start_backend.sh and ensure it serves /api/graph/*.' : (res.statusText || fallbackError);
+  try {
+    const text = await res.text();
+    if (!text || !text.trim()) return { error: statusText };
+    const data = JSON.parse(text) as T;
+    if (!res.ok) {
+      const err = (data as { error?: string }).error || statusText;
+      return { error: err };
+    }
+    return { data, error: '' };
+  } catch {
+    return { error: statusText };
+  }
+}
+
 export async function fetchGraphStats(): Promise<GraphStats> {
   const res = await fetch(`${API_BASE}/api/graph/stats`);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error((data as GraphStats).error || res.statusText || 'Graph stats failed');
-  }
-  return data as GraphStats;
+  const { data, error } = await parseGraphJson<GraphStats>(res, 'Graph stats failed');
+  if (error) throw new Error(error);
+  return data!;
 }
 
 export async function fetchGraphSchema(): Promise<GraphSchemaResponse> {
   const res = await fetch(`${API_BASE}/api/graph/schema`);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error(res.statusText || 'Graph schema failed');
-  }
-  return data as GraphSchemaResponse;
+  const { data, error } = await parseGraphJson<GraphSchemaResponse>(res, 'Graph schema failed');
+  if (error) throw new Error(error);
+  return data!;
 }
 
 export async function fetchGraphSample(): Promise<GraphSampleResponse> {
   const res = await fetch(`${API_BASE}/api/graph/sample`);
-  const data = await res.json();
-  if (!res.ok) {
-    throw new Error((data as GraphSampleResponse).error || res.statusText || 'Graph sample failed');
+  const { data, error } = await parseGraphJson<GraphSampleResponse>(res, 'Graph sample failed');
+  if (error) throw new Error(error);
+  return data!;
+}
+
+/** Predefined graph query: run by query_id, returns cypher + columns + rows */
+export interface GraphQueryResponse {
+  success: boolean;
+  query_id: string | null;
+  label: string | null;
+  /** Neo4j Cypher query that was executed */
+  cypher?: string | null;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  error?: string;
+}
+
+export async function runGraphQuery(queryId: string): Promise<GraphQueryResponse> {
+  const params = new URLSearchParams({ query_id: queryId });
+  const res = await fetch(`${API_BASE}/api/graph/query?${params.toString()}`, {
+    method: 'GET',
+  });
+  const text = await res.text();
+  let data: GraphQueryResponse;
+  try {
+    data = (text ? JSON.parse(text) : {}) as GraphQueryResponse;
+  } catch {
+    throw new Error(res.ok ? 'Invalid response' : (res.statusText || 'Graph query failed'));
   }
-  return data as GraphSampleResponse;
+  return data;
+}
+
+/** Natural language graph query: LLM (Ollama) generates Cypher from question + Neo4j schema */
+export interface GraphQueryNaturalResponse {
+  success: boolean;
+  query: string | null;
+  cypher?: string | null;
+  columns: string[];
+  rows: Record<string, unknown>[];
+  error?: string;
+  llm_model?: string;
+  llm_time_ms?: number;
+}
+
+export async function runGraphQueryNatural(query: string): Promise<GraphQueryNaturalResponse> {
+  const res = await fetch(`${API_BASE}/api/graph/query-natural`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: query.trim() }),
+  });
+  const text = await res.text();
+  let data: GraphQueryNaturalResponse;
+  try {
+    data = (text ? JSON.parse(text) : {}) as GraphQueryNaturalResponse;
+  } catch {
+    throw new Error(res.ok ? 'Invalid response' : (res.statusText || 'Graph query failed'));
+  }
+  return data;
 }

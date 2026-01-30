@@ -574,6 +574,78 @@ def generate_debit_transactions(num_records, customer_ids, batch_size=None):
     return df
 
 
+def generate_disputes(num_disputes=5000, batch_size=None):
+    """
+    Generate disputes referencing existing transactions (credit, ACH, wire, debit, check).
+    Samples transactions from each fact CSV and creates disputes for customers in testdata.
+    Writes facts/disputes.csv for the Neo4j loader.
+    """
+    if batch_size is None:
+        batch_size = _default_generate_batch_size()
+    print(f"\n📊 Generating up to {num_disputes:,} dispute records (from existing transactions)...")
+
+    dispute_reasons = [
+        "Unauthorized charge", "Duplicate charge", "Product not received", "Incorrect amount",
+        "Fraud", "Service not as described", "Subscription not cancelled", "Merchant error",
+        "Wire sent to wrong account", "ACH duplicate", "Check not received", "Credit not applied",
+    ]
+    dispute_statuses = ["Open", "Pending", "Under review", "Resolved", "Closed"]
+    tx_files = [
+        ("ach_transactions.csv", "ach"),
+        ("wire_transactions.csv", "wire"),
+        ("credit_transactions.csv", "credit"),
+        ("debit_transactions.csv", "debit"),
+        ("check_transactions.csv", "check"),
+    ]
+    rows = []
+    dispute_id = 1
+    per_type = max(100, num_disputes // 5)
+
+    for fname, tx_type in tx_files:
+        path = FACTS_DIR / fname
+        if not path.exists():
+            print(f"   ⚠️ Skipping {fname} (not found); generate transactions first.")
+            continue
+        df = pd.read_csv(path, usecols=["transaction_id", "customer_id", "amount", "currency"])
+        if "currency" not in df.columns:
+            df["currency"] = "USD"
+        df = df.dropna(subset=["transaction_id", "customer_id"])
+        if df.empty:
+            continue
+        sample = df.sample(n=min(per_type, len(df)), replace=False, random_state=42)
+        for _, tx in sample.iterrows():
+            amount = tx.get("amount", 0)
+            if pd.isna(amount) or amount <= 0:
+                amount = round(np.random.lognormal(4, 1), 2)
+            amount_disputed = abs(round(float(amount), 2))
+            rows.append({
+                "dispute_id": f"DSP{str(dispute_id).zfill(8)}",
+                "transaction_type": tx_type,
+                "transaction_id": str(tx["transaction_id"]),
+                "customer_id": str(tx["customer_id"]),
+                "dispute_date": fake.date_between(start_date="-1y", end_date="today"),
+                "dispute_reason": np.random.choice(dispute_reasons),
+                "dispute_status": np.random.choice(dispute_statuses, p=[0.15, 0.25, 0.2, 0.25, 0.15]),
+                "amount_disputed": amount_disputed,
+                "currency": str(tx.get("currency", "USD")),
+                "description": f"Dispute for {tx_type} transaction {tx['transaction_id']}",
+                "created_at": datetime.now(),
+            })
+            dispute_id += 1
+            if len(rows) >= num_disputes:
+                break
+        if len(rows) >= num_disputes:
+            break
+
+    if not rows:
+        print("   ❌ No transactions found to create disputes. Generate transactions first.")
+        return None
+    df = pd.DataFrame(rows)
+    df.to_csv(FACTS_DIR / "disputes.csv", index=False)
+    print(f"✅ Generated disputes.csv with {len(df):,} records (credit, ACH, wire, debit, check)")
+    return df
+
+
 def main():
     """Main function to generate all test data"""
     parser = argparse.ArgumentParser(
@@ -610,6 +682,11 @@ Examples:
         action="store_true",
         help="Generate only static tables (country_codes, state_codes, zip_codes); skip customers and transactions"
     )
+    only_group.add_argument(
+        "--only-disputes",
+        action="store_true",
+        help="Generate only disputes (from existing transaction CSVs); requires transaction fact tables"
+    )
     parser.add_argument(
         "--num-customers",
         type=int,
@@ -622,6 +699,12 @@ Examples:
         default=100_000,
         help="Total number of transactions to generate across all types, drawn from the customer set (default: 100,000)"
     )
+    parser.add_argument(
+        "--num-disputes",
+        type=int,
+        default=5_000,
+        help="Number of disputes to generate from existing transactions (default: 5,000); used with --only-disputes or after transactions"
+    )
     default_batch = _default_generate_batch_size()
     parser.add_argument(
         "--batch-size",
@@ -631,9 +714,10 @@ Examples:
     )
     args = parser.parse_args()
 
-    load_static = args.only_static or (not args.only_customers and not args.only_transactions)
-    load_customers = args.only_customers or (not args.only_static and not args.only_transactions)
-    load_transactions = args.only_transactions or (not args.only_static and not args.only_customers)
+    load_static = args.only_static or (not args.only_customers and not args.only_transactions and not args.only_disputes)
+    load_customers = args.only_customers or (not args.only_static and not args.only_transactions and not args.only_disputes)
+    load_transactions = args.only_transactions or (not args.only_static and not args.only_customers and not args.only_disputes)
+    load_disputes = args.only_disputes or (not args.only_static and not args.only_customers and not args.only_transactions)
 
     print("=" * 80)
     print("🏦 openInt Test Data Generator")
@@ -644,6 +728,8 @@ Examples:
         print("   📌 Generating only: transactions")
     elif args.only_static:
         print("   📌 Generating only: static (country, state, zip)")
+    elif args.only_disputes:
+        print("   📌 Generating only: disputes (from existing transactions)")
     print(f"   📦 Batch size: {args.batch_size:,} (10K–50K based on system)")
     print()
 
@@ -689,6 +775,17 @@ Examples:
         generate_ach_transactions(transaction_distribution["ach"], customer_ids, args.batch_size)
         generate_wire_transactions(transaction_distribution["wire"], customer_ids, args.batch_size)
         generate_check_transactions(transaction_distribution["check"], customer_ids, args.batch_size)
+        # Generate disputes from the transactions we just created
+        disputes_df = generate_disputes(num_disputes=args.num_disputes, batch_size=args.batch_size)
+    else:
+        disputes_df = None
+
+    # Generate only disputes (from existing transaction CSVs)
+    if load_disputes:
+        print("\n📋 Generating disputes (credit, ACH, wire, debit, check)...")
+        disputes_df = generate_disputes(num_disputes=args.num_disputes, batch_size=args.batch_size)
+    elif not load_transactions:
+        disputes_df = None
 
     # Summary
     end_time = datetime.now()
@@ -709,6 +806,8 @@ Examples:
         print(f"   • Wire transactions: {transaction_distribution['wire']:,}")
         print(f"   • Check transactions: {transaction_distribution['check']:,}")
         print(f"   • Total transactions: {args.num_transactions:,}")
+    if disputes_df is not None:
+        print(f"   • Disputes: {len(disputes_df):,}")
     print(f"\n📁 Data saved to:")
     print(f"   • Dimensions: {DIMENSIONS_DIR}")
     print(f"   • Facts: {FACTS_DIR}")

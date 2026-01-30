@@ -3,6 +3,7 @@ import { Routes, Route } from 'react-router-dom';
 import { getLogger } from './observability';
 import { Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
+import Marketing from './components/Marketing';
 import SemanticCompare from './components/SemanticCompare';
 import A2A from './components/A2A';
 import Chat from './components/Chat';
@@ -53,7 +54,8 @@ export default function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route path="/" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
+        <Route path="/" element={<Marketing />} />
+        <Route path="/chat" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
         <Route path="/compare" element={<SemanticCompare />} />
         <Route path="/a2a" element={<A2A />} />
         <Route path="/graph" element={<GraphDemo />} />

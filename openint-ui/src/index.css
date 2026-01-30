@@ -30,4 +30,33 @@
   }
   .a2a-flow-dot-2 { animation-delay: 0.35s; }
   .a2a-flow-dot-3 { animation-delay: 0.7s; }
+
+  /* Graph schema: fade-in and slide-up */
+  @keyframes graph-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .graph-schema-enter {
+    animation: graph-fade-in 0.4s ease-out forwards;
+  }
+  .graph-schema-enter-1 { animation-delay: 0.05s; opacity: 0; }
+  .graph-schema-enter-2 { animation-delay: 0.12s; opacity: 0; }
+  .graph-schema-enter-3 { animation-delay: 0.19s; opacity: 0; }
+  .graph-schema-enter-4 { animation-delay: 0.26s; opacity: 0; }
+  .graph-schema-enter-5 { animation-delay: 0.33s; opacity: 0; }
+  .graph-schema-enter-6 { animation-delay: 0.4s; opacity: 0; }
+
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.85; transform: scale(1.1); }
+  }
+  .graph-connected-dot {
+    animation: pulse-soft 2s ease-in-out infinite;
+  }
 }

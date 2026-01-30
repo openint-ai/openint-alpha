@@ -3,7 +3,7 @@ OpenInt Backend
 Flask/FastAPI backend for API gateway to agent system
 """
 
-from flask import Flask, request, jsonify, send_from_directory, g
+from flask import Flask, Blueprint, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 import hashlib
 import json
@@ -1035,6 +1035,7 @@ def chat():
         # Legacy path: result has status "processing", poll get_query_result until done
         aggregated = None
         waited = 0.0
+        start_time = time.time()
         if result.get("status") in ("completed", "no_responses"):
             aggregated = result
             waited = time.time() - _query_start
@@ -1043,7 +1044,6 @@ def chat():
             query_id = result.get("query_id")
             max_wait = 10
             wait_interval = 0.05
-            start_time = time.time()
             logger.debug("Waiting for agent responses", extra={"max_wait": max_wait, "query_id": query_id})
             while waited < max_wait:
                 aggregated = orchestrator.get_query_result(query_id)
@@ -1068,8 +1068,12 @@ def chat():
                     "available_agents": all_agents
                 })
 
-            # Transform to UI-expected format
-            if aggregated:
+        # Safety: if LangGraph returned completed/no_responses, we must have aggregated
+        if aggregated is None and result.get("status") in ("completed", "no_responses"):
+            aggregated = result
+
+        # Transform to UI-expected format (same for LangGraph and legacy polling)
+        if aggregated:
                 status = aggregated.get("status", "unknown")
                 if status == "no_responses":
                     # Debug: Check what agents were queried
@@ -1368,7 +1372,16 @@ def chat():
                         "available_agents": all_agents
                     })
         
-        # Fallback if no query_id
+        # Fallback when aggregated is None (unexpected result shape or no response)
+        logger.warning(
+            "Chat fallback: no aggregated result",
+            extra={
+                "result_status": result.get("status"),
+                "result_keys": list(result.keys()) if isinstance(result, dict) else None,
+                "result_error": result.get("error"),
+                "result_message": result.get("message"),
+            },
+        )
         # Build debug information if requested
         debug_info = None
         finance_model = "mukaj/fin-mpnet-base"
@@ -1378,12 +1391,16 @@ def chat():
         # Always use finance model
         final_embedding_model = finance_model
         
+        # Prefer explicit error/message from orchestrator for the user
+        fallback_error = result.get("error") or result.get("message") or "Unknown error"
+        fallback_answer = f"Failed to process query: {fallback_error}" if fallback_error != "Unknown error" else "Failed to process query"
+        
         response_data = {
             "success": False,
-            "answer": "Failed to process query",
+            "answer": fallback_answer,
             "sources": [],
             "query_time_ms": 0,
-            "error": result.get("message", "Unknown error"),
+            "error": fallback_error,
             "embedding_model": final_embedding_model,
             "embedding_dims": embedding_dims
         }
@@ -1989,6 +2006,98 @@ GRAPH_SCHEMA = {
 }
 
 
+def _build_graph_schema_summary(schema: Dict[str, Any]) -> str:
+    """Build a short text summary of the Neo4j schema for the LLM (nodes + relationships)."""
+    parts = ["Neo4j schema (node labels and relationship types):"]
+    for node in schema.get("nodes", []):
+        label = node.get("label", "")
+        desc = node.get("description", "")
+        id_prop = node.get("id_property", "id")
+        type_prop = node.get("type_property", "")
+        line = f"- Node label: {label}. id property: {id_prop}."
+        if type_prop:
+            line += f" type property: {type_prop} (e.g. ach, wire, credit, debit, check for Transaction)."
+        line += f" {desc}"
+        parts.append(line)
+    parts.append("Relationship types (from -> to):")
+    for rel in schema.get("relationships", []):
+        parts.append(f"- {rel.get('type', '')}: ({rel.get('from', '')})-[:{rel.get('type', '')}]->({rel.get('to', '')}). {rel.get('description', '')}")
+    return "\n".join(parts)
+
+
+def _extract_cypher_from_llm_response(text: str) -> str:
+    """Extract Cypher from LLM response; strip markdown code blocks if present."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    # If wrapped in ```cypher ... ``` or ``` ... ```, take content between first and second ```
+    if "```" in text:
+        parts = text.split("```", 2)
+        if len(parts) >= 2:
+            block = parts[1].strip()
+            # Remove optional language tag on first line (e.g. "cypher" or "neo4j")
+            if "\n" in block:
+                first, rest = block.split("\n", 1)
+                if first.strip().lower() in ("cypher", "neo4j"):
+                    block = rest.strip()
+            if block and "MATCH" in block.upper():
+                return block
+    return text.strip()
+
+
+def _generate_cypher_with_ollama(schema_summary: str, question: str) -> tuple[Optional[str], Optional[str]]:
+    """Use Ollama to generate a Cypher query from natural language. Returns (cypher, error)."""
+    import urllib.request
+    import urllib.error
+    import ssl
+    host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    prompt = f"""You are a Neo4j Cypher expert. Given the schema below and the user question, return ONLY a valid Cypher query. No explanation, no markdown, no code block wrapper.
+
+Schema:
+{schema_summary}
+
+Rules:
+- In MATCH, use exactly these variable names: c for Customer, t for Transaction, d for Dispute. Example: MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+- In RETURN, only use the node variables c, d, t and their properties: c.id, t.id, d.id, t.amount, t.type, d.amount_disputed, d.dispute_status, t.currency, etc. Never use a relationship variable in RETURN (e.g. no r.target; use t.id for transaction_id).
+- Relationship types: HAS_TRANSACTION (Customer->Transaction), OPENED_DISPUTE (Customer->Dispute), REFERENCES (Dispute->Transaction).
+- Every variable in RETURN must appear in MATCH. Add LIMIT 50 for exploration queries.
+- Return ONLY the Cypher statement, nothing else.
+
+User question: {question}"""
+    try:
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 1024},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        message = data.get("message") or {}
+        text = (message.get("content") or "").strip()
+        cypher = _extract_cypher_from_llm_response(text)
+        if not cypher:
+            return (None, "Ollama returned empty or invalid Cypher.")
+        return (cypher, None)
+    except urllib.error.URLError as e:
+        msg = str(e.reason) if getattr(e, "reason", None) else str(e)
+        if "Connection refused" in msg or "111" in msg:
+            msg = "Ollama is not running. Start Ollama (ollama serve) and pull a model: ollama pull " + model
+        return (None, msg)
+    except Exception as e:
+        return (None, str(e))
+
+
 def _get_neo4j():
     """Return Neo4j client (may be None)."""
     global NEO4J_CLIENT
@@ -2002,7 +2111,11 @@ def _get_neo4j():
     return NEO4J_CLIENT
 
 
-@app.route('/api/graph/stats', methods=['GET'])
+# Graph API as Blueprint so routes take precedence over SPA catch-all (avoid 404 for /api/graph/*)
+graph_bp = Blueprint("graph_api", __name__, url_prefix="/api")
+
+
+@graph_bp.route("/graph/stats", methods=["GET"])
 def graph_stats():
     """
     Neo4j graph demo: connectivity and node/relationship counts.
@@ -2054,7 +2167,7 @@ def graph_stats():
         }), 200
 
 
-@app.route('/api/graph/schema', methods=['GET'])
+@graph_bp.route("/graph/schema", methods=["GET"])
 def graph_schema():
     """Neo4j graph demo: schema summary from DataHub + loader (nodes and relationship types)."""
     return jsonify({
@@ -2063,7 +2176,7 @@ def graph_schema():
     })
 
 
-@app.route('/api/graph/sample', methods=['GET'])
+@graph_bp.route("/graph/sample", methods=["GET"])
 def graph_sample():
     """
     Neo4j graph demo: sample data — disputes overview and customer–transaction–dispute paths.
@@ -2093,7 +2206,7 @@ def graph_sample():
             LIMIT 25
         """)
         paths = client.run("""
-            MATCH path = (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)<-[:REFERENCES]-(d:Dispute)
+            MATCH (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)<-[:REFERENCES]-(d:Dispute)
             RETURN c.id AS customer_id, t.id AS transaction_id, d.id AS dispute_id,
                    t.amount AS tx_amount, d.amount_disputed, d.dispute_status
             LIMIT 20
@@ -2111,6 +2224,253 @@ def graph_sample():
             "disputes_overview": [],
             "paths": [],
         }), 200
+
+
+# Predefined graph queries for the demo (left-pane suggestions). Each returns list of dicts.
+GRAPH_QUERIES = {
+    "disputes_overview": {
+        "label": "Customer → Dispute → Transaction",
+        "cypher": """
+            MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+            RETURN c.id AS customer_id, d.id AS dispute_id, t.id AS transaction_id,
+                   d.dispute_status AS status, d.amount_disputed AS amount_disputed, d.currency AS currency
+            LIMIT 50
+        """,
+    },
+    "paths": {
+        "label": "Customer → Transaction ← Dispute (paths)",
+        "cypher": """
+            MATCH (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)<-[:REFERENCES]-(d:Dispute)
+            RETURN c.id AS customer_id, t.id AS transaction_id, d.id AS dispute_id,
+                   t.amount AS tx_amount, d.amount_disputed, d.dispute_status
+            LIMIT 50
+        """,
+    },
+    "wire_over_10k": {
+        "label": "Wire transfers over $10,000",
+        "cypher": """
+            MATCH (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)
+            WHERE t.type = 'wire' AND t.amount > 10000
+            RETURN c.id AS customer_id, t.id AS transaction_id, t.amount, t.currency
+            ORDER BY t.amount DESC
+            LIMIT 50
+        """,
+    },
+    "credit_disputes": {
+        "label": "Credit card disputes",
+        "cypher": """
+            MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+            WHERE t.type = 'credit'
+            RETURN c.id AS customer_id, d.id AS dispute_id, t.id AS transaction_id,
+                   d.dispute_status, d.amount_disputed, d.currency
+            LIMIT 50
+        """,
+    },
+    "ach_disputes": {
+        "label": "ACH disputes",
+        "cypher": """
+            MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+            WHERE t.type = 'ach'
+            RETURN c.id AS customer_id, d.id AS dispute_id, t.id AS transaction_id,
+                   d.dispute_status, d.amount_disputed, d.currency
+            LIMIT 50
+        """,
+    },
+    "wire_disputes": {
+        "label": "Wire disputes",
+        "cypher": """
+            MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+            WHERE t.type = 'wire'
+            RETURN c.id AS customer_id, d.id AS dispute_id, t.id AS transaction_id,
+                   d.dispute_status, d.amount_disputed, d.currency
+            LIMIT 50
+        """,
+    },
+    "open_disputes": {
+        "label": "Open disputes",
+        "cypher": """
+            MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+            WHERE d.dispute_status = 'Open'
+            RETURN c.id AS customer_id, d.id AS dispute_id, t.id AS transaction_id,
+                   d.dispute_status, d.amount_disputed, d.currency
+            LIMIT 50
+        """,
+    },
+    "top_customers_by_tx": {
+        "label": "Top customers by transaction count",
+        "cypher": """
+            MATCH (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)
+            RETURN c.id AS customer_id, count(t) AS transaction_count
+            ORDER BY transaction_count DESC
+            LIMIT 25
+        """,
+    },
+    "international_wires": {
+        "label": "International wire transfers",
+        "cypher": """
+            MATCH (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)
+            WHERE t.type = 'wire' AND t.currency <> 'USD'
+            RETURN c.id AS customer_id, t.id AS transaction_id, t.amount, t.currency
+            LIMIT 50
+        """,
+    },
+}
+
+
+@graph_bp.route("/graph/query", methods=["GET", "POST"])
+def graph_query():
+    """
+    Run a predefined graph query by query_id.
+    GET: ?query_id=disputes_overview
+    POST: body { "query_id": "disputes_overview" | ... }
+    Returns { success, query_id, label, cypher, columns, rows, error? }.
+    """
+    client = _get_neo4j()
+    if not client:
+        return jsonify({
+            "success": False,
+            "query_id": None,
+            "label": None,
+            "cypher": None,
+            "columns": [],
+            "rows": [],
+            "error": "Neo4j client not available",
+        }), 200
+    if request.method == "GET":
+        query_id = (request.args.get("query_id") or "").strip()
+    else:
+        data = request.get_json() or {}
+        query_id = (data.get("query_id") or "").strip()
+    if not query_id or query_id not in GRAPH_QUERIES:
+        return jsonify({
+            "success": False,
+            "query_id": query_id,
+            "label": None,
+            "cypher": None,
+            "columns": [],
+            "rows": [],
+            "error": "Unknown query_id. Use one of: " + ", ".join(sorted(GRAPH_QUERIES.keys())),
+        }), 200
+    spec = GRAPH_QUERIES[query_id]
+    cypher = spec["cypher"].strip()
+    try:
+        if not client.verify_connectivity():
+            return jsonify({
+                "success": False,
+                "query_id": query_id,
+                "label": spec["label"],
+                "cypher": cypher,
+                "columns": [],
+                "rows": [],
+                "error": "Cannot connect to Neo4j",
+            }), 200
+        rows = client.run(cypher) or []
+        columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+        return jsonify({
+            "success": True,
+            "query_id": query_id,
+            "label": spec["label"],
+            "cypher": cypher,
+            "columns": columns,
+            "rows": rows,
+        })
+    except Exception as e:
+        logger.warning("Neo4j graph query failed", extra={"query_id": query_id, "error": str(e)})
+        return jsonify({
+            "success": False,
+            "query_id": query_id,
+            "label": spec["label"],
+            "cypher": cypher,
+            "columns": [],
+            "rows": [],
+            "error": str(e),
+        }), 200
+
+
+@graph_bp.route("/graph/query-natural", methods=["GET", "POST"])
+def graph_query_natural():
+    """
+    Run a graph query from natural language using the Neo4j schema and an LLM (Ollama).
+    POST: body { "query": "natural language question" }.
+    GET: ?query=natural+language+question (for proxies/tools that only allow GET).
+    Returns { success, query, cypher, columns, rows, error?, llm_model? }.
+    """
+    client = _get_neo4j()
+    if request.method == "POST":
+        data = request.get_json() or {}
+        question = (data.get("query") or "").strip()
+    else:
+        question = (request.args.get("query") or "").strip()
+    if not question:
+        return jsonify({
+            "success": False,
+            "query": None,
+            "cypher": None,
+            "columns": [],
+            "rows": [],
+            "error": "Missing 'query'. Use POST body {\"query\": \"...\"} or GET ?query=...",
+        }), 400
+    if not client:
+        return jsonify({
+            "success": False,
+            "query": question,
+            "cypher": None,
+            "columns": [],
+            "rows": [],
+            "error": "Neo4j client not available. Install neo4j driver and set NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD.",
+        }), 200
+    schema_summary = _build_graph_schema_summary(GRAPH_SCHEMA)
+    logger.info("graph query-natural: generating Cypher via Ollama for question (length=%d)", len(question))
+    t0 = time.perf_counter()
+    cypher, llm_error = _generate_cypher_with_ollama(schema_summary, question)
+    llm_ms = round((time.perf_counter() - t0) * 1000)
+    if llm_error or not cypher:
+        logger.warning("graph query-natural: Ollama Cypher generation failed", extra={"error": llm_error})
+        return jsonify({
+            "success": False,
+            "query": question,
+            "cypher": cypher or None,
+            "columns": [],
+            "rows": [],
+            "error": llm_error or "Could not generate Cypher from question.",
+        }), 200
+    try:
+        if not client.verify_connectivity():
+            return jsonify({
+                "success": False,
+                "query": question,
+                "cypher": cypher,
+                "columns": [],
+                "rows": [],
+                "error": "Cannot connect to Neo4j.",
+            }), 200
+        rows = client.run(cypher) or []
+        columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+        payload = {
+            "success": True,
+            "query": question,
+            "cypher": cypher,
+            "columns": columns,
+            "rows": rows,
+        }
+        if llm_ms:
+            payload["llm_time_ms"] = llm_ms
+        payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
+        logger.info("graph query-natural: ran Cypher successfully", extra={"rows": len(rows), "llm_ms": llm_ms})
+        return jsonify(payload)
+    except Exception as e:
+        logger.warning("graph query-natural: Neo4j execution failed", extra={"error": str(e)})
+        return jsonify({
+            "success": False,
+            "query": question,
+            "cypher": cypher,
+            "columns": [],
+            "rows": [],
+            "error": f"Neo4j error: {str(e)}",
+        }), 200
+
+
+app.register_blueprint(graph_bp)
 
 
 @app.route('/api/suggestions/lucky', methods=['GET'])

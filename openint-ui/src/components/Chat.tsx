@@ -1727,13 +1727,6 @@ export default function ChatPage() {
         <div ref={middleScrollRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-3">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center text-center py-8 px-4 min-h-full">
-              <div className="mb-8 flex justify-center w-full">
-                <img
-                  src="/ai-agent-hero.png"
-                  alt="openInt.ai – AI agent for semantic data, transactions, customers, disputes"
-                  className="w-full max-w-[400px] sm:max-w-[500px] md:max-w-[600px] lg:max-w-[700px] xl:max-w-[800px] 2xl:max-w-[900px] h-auto object-contain drop-shadow-lg"
-                />
-              </div>
               <h1 className="text-xl font-semibold text-gray-900 mb-2">Semantic Search for your Data</h1>
               <p className="text-gray-600 text-sm max-w-md mb-2">
                 Ask about customers, transactions, locations (state, ZIP), and amounts. Answers are built from your

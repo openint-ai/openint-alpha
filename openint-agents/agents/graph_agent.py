@@ -1,12 +1,18 @@
 """
 Graph Agent
-Performs relationship and path queries in Neo4j graph database
+Performs relationship and path queries in Neo4j graph database.
+Uses natural language + Neo4j schema with an LLM (Ollama) to generate Cypher when available;
+falls back to keyword-based template matching otherwise.
 """
 
 import sys
 import os
+import json
 import threading
-from typing import Dict, List, Any, Optional
+import urllib.request
+import urllib.error
+import ssl
+from typing import Dict, List, Any, Optional, Tuple
 
 # Add repo root and openint-graph to path
 _parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -70,6 +76,85 @@ ORDER BY transaction_count DESC
 LIMIT 20
 """
 
+# Neo4j schema summary for LLM (matches openint-backend GRAPH_SCHEMA / load_openint_data_to_neo4j)
+GRAPH_SCHEMA_SUMMARY = """
+Neo4j schema (node labels and relationship types):
+- Node label: Customer. id property: id. Customer dimension (from DataHub customers schema).
+- Node label: Transaction. id property: id. type property: type (e.g. ach, wire, credit, debit, check). Transaction facts from DataHub fact tables.
+- Node label: Dispute. id property: id. Dispute fact (from DataHub disputes schema).
+Relationship types (from -> to):
+- HAS_TRANSACTION: (Customer)-[:HAS_TRANSACTION]->(Transaction). Customer has transactions.
+- OPENED_DISPUTE: (Customer)-[:OPENED_DISPUTE]->(Dispute). Customer opened a dispute.
+- REFERENCES: (Dispute)-[:REFERENCES]->(Transaction). Dispute references a transaction.
+"""
+
+
+def _extract_cypher_from_llm(text: str) -> str:
+    """Extract Cypher from LLM response; strip markdown code blocks if present."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if "```" in text:
+        parts = text.split("```", 2)
+        if len(parts) >= 2:
+            block = parts[1].strip()
+            if "\n" in block:
+                first, rest = block.split("\n", 1)
+                if first.strip().lower() in ("cypher", "neo4j"):
+                    block = rest.strip()
+            if block and "MATCH" in block.upper():
+                return block
+    return text.strip()
+
+
+def _generate_cypher_with_ollama(question: str) -> Tuple[Optional[str], Optional[str]]:
+    """Use Ollama to generate Cypher from natural language. Returns (cypher, error)."""
+    host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    prompt = f"""You are a Neo4j Cypher expert. Given the schema below and the user question, return ONLY a valid Cypher query. No explanation, no markdown, no code block wrapper.
+
+{GRAPH_SCHEMA_SUMMARY}
+
+Rules:
+- In MATCH, use exactly these variable names: c for Customer, t for Transaction, d for Dispute. Example: MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+- In RETURN, only use the node variables c, d, t and their properties: c.id, t.id, d.id, t.amount, t.type, d.amount_disputed, d.dispute_status, t.currency, etc. Never use a relationship variable in RETURN (e.g. no r.target; use t.id for transaction_id).
+- Relationship types: HAS_TRANSACTION (Customer->Transaction), OPENED_DISPUTE (Customer->Dispute), REFERENCES (Dispute->Transaction).
+- Every variable in RETURN must appear in MATCH. Add LIMIT 50 for exploration queries.
+- Return ONLY the Cypher statement, nothing else.
+
+User question: {question}"""
+    try:
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 1024},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=45, context=ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        message = data.get("message") or {}
+        text = (message.get("content") or "").strip()
+        cypher = _extract_cypher_from_llm(text)
+        if not cypher:
+            return (None, "Ollama returned empty or invalid Cypher.")
+        return (cypher, None)
+    except urllib.error.URLError as e:
+        msg = str(e.reason) if getattr(e, "reason", None) else str(e)
+        if "Connection refused" in msg or "111" in msg:
+            msg = "Ollama not running. Start ollama serve and pull a model (e.g. ollama pull llama3.2)."
+        return (None, msg)
+    except Exception as e:
+        return (None, str(e))
+
 
 def _path_summary(record: Dict[str, Any]) -> str:
     """Build a short text summary from a graph record."""
@@ -124,8 +209,9 @@ class GraphAgent(BaseAgent):
 
     def process_query(self, query: str, context: Dict[str, Any] = None) -> AgentResponse:
         """
-        Interpret query and run one or more Cypher queries; return results as AgentResponse
-        with results shaped like SearchAgent (content, metadata including file_type: "graph_path").
+        Interpret query (natural language or structured) and run Cypher; return results as AgentResponse.
+        Uses Ollama + Neo4j schema to generate Cypher from natural language when available;
+        falls back to keyword-based template matching otherwise.
         """
         if self._client is None:
             return AgentResponse(
@@ -134,70 +220,91 @@ class GraphAgent(BaseAgent):
                 message="Neo4j client not available",
                 metadata={"error": "Neo4j not initialized"},
             )
+        query = (query or "").strip()
+        if not query:
+            return AgentResponse(
+                success=False,
+                results=[],
+                message="Empty query",
+                metadata={"error": "Empty query"},
+            )
         try:
             self.update_status("BUSY")
-            query_lower = (query or "").strip().lower()
             records: List[Dict[str, Any]] = []
-            error_holder: List[str] = []
-
-            def _run_queries() -> None:
-                nonlocal records, error_holder
+            cypher_used: Optional[str] = None
+            # 1) Try LLM-generated Cypher (natural language -> Ollama + schema -> Cypher)
+            cypher, llm_error = _generate_cypher_with_ollama(query)
+            if cypher:
                 try:
-                    if "dispute" in query_lower and ("customer" in query_lower or "path" in query_lower or "link" in query_lower):
-                        try:
-                            rows = self._client.run(CYPHER_PATH_CUSTOMER_TRANSACTION_DISPUTE)
-                            records.extend(rows)
-                        except Exception as e:
-                            error_holder.append(str(e))
-                    if "dispute" in query_lower and not records:
-                        try:
+                    records = self._client.run(cypher) or []
+                    cypher_used = cypher
+                    logger.info("GraphAgent: ran LLM-generated Cypher (%d rows)", len(records))
+                except Exception as e:
+                    logger.warning("GraphAgent: LLM Cypher execution failed, falling back to templates", extra={"error": str(e)})
+                    records = []
+            # 2) Fallback: keyword-based template matching
+            if not records:
+                query_lower = query.lower()
+                error_holder: List[str] = []
+
+                def _run_templates() -> None:
+                    nonlocal records, error_holder
+                    try:
+                        if "dispute" in query_lower and ("customer" in query_lower or "path" in query_lower or "link" in query_lower):
+                            try:
+                                rows = self._client.run(CYPHER_PATH_CUSTOMER_TRANSACTION_DISPUTE)
+                                records.extend(rows)
+                            except Exception as e:
+                                error_holder.append(str(e))
+                        if "dispute" in query_lower and not records:
+                            try:
+                                customer_id = None
+                                for w in query_lower.replace(",", " ").split():
+                                    if w.startswith("cust") and len(w) >= 10:
+                                        customer_id = w.upper()
+                                        break
+                                if customer_id:
+                                    rows = self._client.run(CYPHER_CUSTOMER_DISPUTES, {"customer_id": customer_id})
+                                else:
+                                    rows = self._client.run(CYPHER_DISPUTES_OVERVIEW)
+                                records.extend(rows)
+                            except Exception as e:
+                                error_holder.append(str(e))
+                        if ("transaction" in query_lower or "account" in query_lower) and "customer" in query_lower:
                             customer_id = None
                             for w in query_lower.replace(",", " ").split():
                                 if w.startswith("cust") and len(w) >= 10:
                                     customer_id = w.upper()
                                     break
                             if customer_id:
-                                rows = self._client.run(CYPHER_CUSTOMER_DISPUTES, {"customer_id": customer_id})
-                            else:
-                                rows = self._client.run(CYPHER_DISPUTES_OVERVIEW)
-                            records.extend(rows)
-                        except Exception as e:
-                            error_holder.append(str(e))
-                    if ("transaction" in query_lower or "account" in query_lower) and "customer" in query_lower:
-                        customer_id = None
-                        for w in query_lower.replace(",", " ").split():
-                            if w.startswith("cust") and len(w) >= 10:
-                                customer_id = w.upper()
-                                break
-                        if customer_id:
+                                try:
+                                    rows = self._client.run(CYPHER_CUSTOMER_TRANSACTIONS, {"customer_id": customer_id})
+                                    records.extend(rows)
+                                except Exception as e:
+                                    error_holder.append(str(e))
+                        if ("link" in query_lower or "connected" in query_lower or "relationship" in query_lower) and not records:
                             try:
-                                rows = self._client.run(CYPHER_CUSTOMER_TRANSACTIONS, {"customer_id": customer_id})
+                                rows = self._client.run(CYPHER_LINKED_ACCOUNTS)
                                 records.extend(rows)
                             except Exception as e:
                                 error_holder.append(str(e))
-                    if ("link" in query_lower or "connected" in query_lower or "relationship" in query_lower) and not records:
-                        try:
-                            rows = self._client.run(CYPHER_LINKED_ACCOUNTS)
-                            records.extend(rows)
-                        except Exception as e:
-                            error_holder.append(str(e))
-                    if not records and ("graph" in query_lower or "related" in query_lower or "dispute" in query_lower):
-                        try:
-                            rows = self._client.run(CYPHER_DISPUTES_OVERVIEW)
-                            records.extend(rows)
-                        except Exception as e:
-                            error_holder.append(str(e))
-                except Exception as e:
-                    error_holder.append(str(e))
+                        if not records and ("graph" in query_lower or "related" in query_lower or "dispute" in query_lower):
+                            try:
+                                rows = self._client.run(CYPHER_DISPUTES_OVERVIEW)
+                                records.extend(rows)
+                            except Exception as e:
+                                error_holder.append(str(e))
+                    except Exception as e:
+                        error_holder.append(str(e))
 
-            th = threading.Thread(target=_run_queries)
-            th.daemon = True
-            th.start()
-            th.join(timeout=self.GRAPH_QUERY_TIMEOUT)
-            if th.is_alive():
-                logger.warning("GraphAgent query timed out after %ss (Neo4j slow or unreachable)", self.GRAPH_QUERY_TIMEOUT)
-                records = []
-                error_holder.append("Graph query timed out (Neo4j slow or unreachable)")
+                th = threading.Thread(target=_run_templates)
+                th.daemon = True
+                th.start()
+                th.join(timeout=self.GRAPH_QUERY_TIMEOUT)
+                if th.is_alive():
+                    logger.warning("GraphAgent query timed out after %ss", self.GRAPH_QUERY_TIMEOUT)
+                    records = []
+                    error_holder.append("Graph query timed out (Neo4j slow or unreachable)")
 
             # Format as list of { content, metadata } for backend aggregation
             results = []
@@ -212,12 +319,15 @@ class GraphAgent(BaseAgent):
                     },
                 })
 
+            meta = {"query": query, "results_count": len(results)}
+            if cypher_used:
+                meta["cypher"] = cypher_used
             self.update_status("IDLE")
             return AgentResponse(
                 success=True,
                 results=results,
                 message=f"Found {len(results)} graph result(s)",
-                metadata={"query": query, "results_count": len(results)},
+                metadata=meta,
             )
         except Exception as e:
             self.update_status("ERROR")
