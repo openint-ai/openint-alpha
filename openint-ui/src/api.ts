@@ -362,3 +362,56 @@ export async function getLuckySuggestion(): Promise<LuckySuggestion> {
   }
   return data;
 }
+
+/** A2A run: sg-agent → modelmgmt-agent flow */
+export interface A2AStep {
+  agent: string;
+  action: string;
+  status: 'running' | 'completed' | 'failed';
+  count?: number;
+}
+
+export interface A2ASentence {
+  text: string;
+  category?: string;
+}
+
+export interface A2AAnnotationItem {
+  sentence: string;
+  annotation: {
+    success?: boolean;
+    query?: string;
+    models?: Record<string, { tags?: unknown[]; highlighted_segments?: unknown[]; semantic_annotation_time_ms?: number }>;
+    best_model?: string;
+    schema_assets?: string[];
+    error?: string;
+  } | null;
+  success: boolean;
+}
+
+export interface A2ARunResponse {
+  success: boolean;
+  steps: A2AStep[];
+  sentences: A2ASentence[];
+  annotations: A2AAnnotationItem[];
+  error?: string;
+}
+
+export async function runA2A(sentenceCount = 3): Promise<A2ARunResponse> {
+  const res = await fetch(`${API_BASE}/api/a2a/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sentence_count: sentenceCount }),
+  });
+  const text = await res.text();
+  let data: A2ARunResponse;
+  try {
+    data = (text ? JSON.parse(text) : {}) as A2ARunResponse;
+  } catch {
+    throw new Error(res.ok ? 'Invalid response from server' : (res.statusText || `Request failed (${res.status})`));
+  }
+  if (!res.ok) {
+    throw new Error(data.error || res.statusText || 'A2A run failed');
+  }
+  return data;
+}

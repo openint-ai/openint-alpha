@@ -1780,6 +1780,105 @@ def preview_semantic_analysis_multi():
         }), 500
 
 
+# --- A2A (Agent-to-Agent) protocol ---
+try:
+    from a2a import (
+        _agent_card_sg_agent,
+        _agent_card_modelmgmt_agent,
+        handle_json_rpc as a2a_handle_json_rpc,
+    )
+    A2A_AVAILABLE = True
+except ImportError:
+    A2A_AVAILABLE = False
+
+
+@app.route('/api/a2a/agents/<agent_id>/card', methods=['GET'])
+def a2a_agent_card(agent_id):
+    """Return A2A Agent Card for discovery (Google A2A spec)."""
+    if not A2A_AVAILABLE:
+        return jsonify({"error": "A2A not available"}), 503
+    if agent_id == "sg-agent":
+        return jsonify(_agent_card_sg_agent())
+    if agent_id == "modelmgmt-agent":
+        return jsonify(_agent_card_modelmgmt_agent())
+    return jsonify({"error": f"Unknown agent: {agent_id}"}), 404
+
+
+@app.route('/api/a2a/agents/<agent_id>', methods=['POST'])
+def a2a_agent_json_rpc(agent_id):
+    """A2A message/send via JSON-RPC 2.0 (Google A2A spec)."""
+    if not A2A_AVAILABLE:
+        return jsonify({"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": "A2A not available"}}), 503
+    if agent_id not in ("sg-agent", "modelmgmt-agent"):
+        return jsonify({"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": f"Unknown agent: {agent_id}"}}), 404
+    body = request.get_data()
+    resp, status = a2a_handle_json_rpc(body, agent_id)
+    return jsonify(resp), status
+
+
+@app.route('/api/a2a/run', methods=['POST'])
+def a2a_run():
+    """
+    Run A2A flow: sg-agent generates sentences → modelmgmt-agent annotates each.
+    Body: { "sentence_count": 3 } (optional, default 3).
+    Returns: { "success", "steps", "sentences", "annotations", "error" }.
+    """
+    if not A2A_AVAILABLE:
+        return jsonify({"success": False, "error": "A2A not available"}), 503
+    try:
+        data = request.get_json() or {}
+        sentence_count = min(5, max(1, int(data.get("sentence_count", 3))))
+    except (TypeError, ValueError):
+        sentence_count = 3
+    steps = []
+    sentences = []
+    annotations = []
+    try:
+        # Ensure agents path
+        agent_system_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-agents'))
+        if agent_system_path not in sys.path:
+            sys.path.insert(0, agent_system_path)
+        datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
+        if os.path.isdir(datahub_path) and datahub_path not in sys.path:
+            sys.path.insert(0, datahub_path)
+        from a2a import handle_sg_agent_message_send, handle_modelmgmt_agent_message_send
+        # Step 1: sg-agent — generate sentences via A2A message/send
+        steps.append({"agent": "sg-agent", "action": "generate", "status": "running"})
+        msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": f"Generate {sentence_count} sentences"}], "messageId": "a2a-run-1", "kind": "message"}}
+        task_sg = handle_sg_agent_message_send(msg)
+        if task_sg.get("status", {}).get("state") == "failed":
+            steps[-1]["status"] = "failed"
+            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "error": "sg-agent failed to generate sentences"}), 503
+        steps[-1]["status"] = "completed"
+        # Extract sentences from task artifacts
+        for art in task_sg.get("artifacts") or []:
+            for p in art.get("parts") or []:
+                if p.get("kind") == "text" and p.get("text"):
+                    sentences.append({"text": p["text"], "category": p.get("metadata", {}).get("category", "Analyst")})
+        if not sentences:
+            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "error": "No sentences from sg-agent"}), 503
+        # Step 2: modelmgmt-agent — annotate each sentence via A2A message/send
+        steps.append({"agent": "modelmgmt-agent", "action": "annotate", "status": "running", "count": len(sentences)})
+        for i, sent in enumerate(sentences):
+            msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": sent["text"]}], "messageId": f"a2a-annot-{i}", "kind": "message"}}
+            task_mm = handle_modelmgmt_agent_message_send(msg)
+            ann = None
+            if task_mm.get("status", {}).get("state") == "completed":
+                for art in task_mm.get("artifacts") or []:
+                    for p in art.get("parts") or []:
+                        if p.get("kind") == "data":
+                            ann = p.get("data")
+                            break
+            annotations.append({"sentence": sent["text"], "annotation": ann, "success": ann is not None})
+        steps[-1]["status"] = "completed"
+        return jsonify({"success": True, "steps": steps, "sentences": sentences, "annotations": annotations})
+    except Exception as e:
+        logger.exception("A2A run failed")
+        if steps:
+            steps[-1]["status"] = "failed"
+        return jsonify({"success": False, "steps": steps, "sentences": sentences, "annotations": annotations, "error": str(e)}), 500
+
+
 @app.route('/api/suggestions/lucky', methods=['GET'])
 def suggestions_lucky():
     """

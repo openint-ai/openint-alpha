@@ -9,6 +9,7 @@ export default function Layout() {
 
   const isChat = loc.pathname === '/' || loc.pathname === '/chat';
   const isCompare = loc.pathname === '/compare';
+  const isA2A = loc.pathname === '/a2a';
   const isHelp = loc.pathname === '/help';
   const isDocs = loc.pathname.startsWith('/docs');
   const isDocsApi = loc.pathname === '/docs/api';
@@ -48,6 +49,14 @@ export default function Layout() {
               }`}
             >
               Compare
+            </Link>
+            <Link
+              to="/a2a"
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                isA2A ? 'bg-brand-100 text-brand-700' : 'text-gray-600 hover:text-gray-900 hover:bg-surface-100'
+              }`}
+            >
+              A2A
             </Link>
             <Link
               to="/help"
@@ -98,7 +107,7 @@ export default function Layout() {
         </div>
       </header>
 
-      <main className={`flex-1 w-full mx-auto py-4 sm:py-6 md:py-8 ${isCompare ? 'max-w-full px-2 sm:px-4' : isChat ? 'max-w-full px-2 sm:px-4 md:px-6' : 'max-w-4xl px-2 sm:px-4 md:px-6'}`}>
+      <main className={`flex-1 w-full mx-auto py-4 sm:py-6 md:py-8 ${isCompare || isA2A ? 'max-w-full px-2 sm:px-4' : isChat ? 'max-w-full px-2 sm:px-4 md:px-6' : 'max-w-4xl px-2 sm:px-4 md:px-6'}`}>
         <Outlet />
       </main>
     </div>
