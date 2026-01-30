@@ -14,10 +14,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 _log_level = (os.environ.get("LOG_LEVEL") or "WARNING").strip().upper()
 if _log_level == "DEBUG":
     _log_level = "INFO"
+_log_format = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 logging.basicConfig(
     level=getattr(logging, _log_level, logging.WARNING),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    format=_log_format,
 )
+# Log file in agents dir (agents.log) – agent and orchestration logs; do not commit
+try:
+    _root = logging.getLogger()
+    _agents_level = getattr(logging, _log_level, logging.WARNING)
+    _log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agents.log")
+    _file_handler = logging.FileHandler(_log_file, encoding="utf-8")
+    _file_handler.setLevel(_agents_level)
+    _file_handler.setFormatter(logging.Formatter(_log_format))
+    _root.addHandler(_file_handler)
+except Exception:
+    pass
 
 from communication.orchestrator import AgentOrchestrator
 from communication.agent_registry import AgentCapability

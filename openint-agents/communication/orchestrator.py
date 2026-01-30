@@ -1,8 +1,9 @@
 """
 Agent Orchestrator
 Coordinates multi-agent workflows and manages agent collaboration.
-Uses LangGraph when agent_instances is provided (select_agents -> run_agents -> aggregate);
-otherwise falls back to message-bus + polling.
+Default: LangGraph-based orchestration (select_agents -> run_agents -> aggregate) when
+agent_instances is provided. Message-bus + polling is only used when agent_instances
+is not provided or when USE_LANGGRAPH=0.
 """
 
 from typing import Dict, List, Optional, Any
@@ -45,11 +46,17 @@ class QueryContext:
             self.metadata = {}
 
 
+def _use_langgraph_by_default() -> bool:
+    """Return True if LangGraph should be used when agent_instances is provided (default: True)."""
+    v = (os.environ.get("USE_LANGGRAPH") or "1").strip().lower()
+    return v in ("1", "true", "yes")
+
+
 class AgentOrchestrator:
     """
     Orchestrator for coordinating multiple agents.
-    When agent_instances is provided, uses LangGraph (select_agents -> run_agents -> aggregate)
-    and process_query returns the aggregated result in one call. Otherwise uses message bus + polling.
+    Default: LangGraph-based orchestration (select_agents -> run_agents -> aggregate)
+    when agent_instances is provided. Set USE_LANGGRAPH=0 to allow message-bus fallback.
     """
     
     def __init__(
@@ -64,20 +71,31 @@ class AgentOrchestrator:
         self._agent_instances = agent_instances or {}
         self._agent_runner = agent_runner
         self._langgraph_orchestrator: Optional[Any] = None
+        use_langgraph = _use_langgraph_by_default()
 
-        if self._agent_instances and _LANGGRAPH_AVAILABLE and LangGraphOrchestrator is not None:
-            try:
-                self._langgraph_orchestrator = LangGraphOrchestrator(
-                    registry=self.registry,
-                    agent_instances=self._agent_instances,
-                    agent_runner=self._agent_runner,
-                )
-                logger.info(
-                    "LangGraph orchestrator enabled (agent_instances provided%s)",
-                    ", A2A runner" if self._agent_runner else "",
-                )
-            except Exception as e:
-                logger.warning("LangGraph orchestrator not used: %s", e)
+        if self._agent_instances:
+            if not _LANGGRAPH_AVAILABLE or LangGraphOrchestrator is None:
+                if use_langgraph:
+                    raise RuntimeError(
+                        "LangGraph is required for orchestration (default). "
+                        "Install with: pip install 'langgraph>=0.2.0'"
+                    )
+                logger.warning("LangGraph not available; falling back to message-bus (set USE_LANGGRAPH=0 to suppress)")
+            elif use_langgraph:
+                try:
+                    self._langgraph_orchestrator = LangGraphOrchestrator(
+                        registry=self.registry,
+                        agent_instances=self._agent_instances,
+                        agent_runner=self._agent_runner,
+                    )
+                    logger.info(
+                        "LangGraph orchestrator enabled (default)%s",
+                        ", A2A runner" if self._agent_runner else "",
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        "LangGraph orchestration failed (default). Set USE_LANGGRAPH=0 to use message-bus."
+                    ) from e
 
         self._active_queries: Dict[str, QueryContext] = {}
         self._query_responses: Dict[str, List[Dict[str, Any]]] = {}

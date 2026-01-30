@@ -41,7 +41,11 @@ htmlcov/
 
 # Project specific
 test_output.txt
+# Log files (do not commit)
 *.log
+openint-backend/backend.log
+openint-agents/agents.log
+openint-ui/ui.log
 .DS_Store
 testdata/
 *.pid

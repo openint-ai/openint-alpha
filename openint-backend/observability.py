@@ -147,18 +147,25 @@ def _configure_logging() -> None:
     for h in list(root.handlers):
         root.removeHandler(h)
 
+    if LOG_JSON:
+        formatter = JsonLogFormatter()
+    else:
+        formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
-
-    if LOG_JSON:
-        handler.setFormatter(JsonLogFormatter())
-    else:
-        handler.setFormatter(
-            logging.Formatter(
-                "%(asctime)s %(levelname)s [%(name)s] %(message)s"
-            )
-        )
+    handler.setFormatter(formatter)
     root.addHandler(handler)
+
+    # Log file in backend dir (backend.log) – do not commit
+    try:
+        log_file = os.path.join(os.path.dirname(__file__), "backend.log")
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except Exception:
+        pass
 
 
 class _NoopSpanExporter:

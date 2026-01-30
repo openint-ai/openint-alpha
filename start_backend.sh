@@ -96,6 +96,12 @@ if ! "$VENV_PYTHON" -c "from langgraph.graph import StateGraph" 2>/dev/null; the
     "$VENV_PIP" install -q "langgraph>=0.2.0"
 fi
 
+# Ensure neo4j driver is available (graph_agent Neo4j client)
+if ! "$VENV_PYTHON" -c "import neo4j" 2>/dev/null; then
+    echo -e "${YELLOW}Installing neo4j into venv (required for graph_agent)...${NC}"
+    "$VENV_PIP" install -q "neo4j>=5.0.0"
+fi
+
 # Check if backend is already running and kill it
 PORT=${PORT:-3001}
 if check_port $PORT; then

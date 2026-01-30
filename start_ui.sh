@@ -110,4 +110,5 @@ echo ""
 
 # Export port for vite.config.ts
 export FRONTEND_PORT=$FRONTEND_PORT
-npm run dev -- --port $FRONTEND_PORT --host 0.0.0.0
+# Log UI dev server output to ui.log in openint-ui (do not commit); also show in terminal
+npm run dev -- --port $FRONTEND_PORT --host 0.0.0.0 2>&1 | tee -a ui.log

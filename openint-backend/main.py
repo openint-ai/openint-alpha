@@ -57,6 +57,9 @@ if agent_system_path not in sys.path:
 _vectordb_milvus_path = os.path.abspath(os.path.join(_repo_root, 'openint-vectordb', 'milvus'))
 if os.path.isdir(_vectordb_milvus_path) and _vectordb_milvus_path not in sys.path:
     sys.path.insert(0, _vectordb_milvus_path)
+_openint_graph_path = os.path.abspath(os.path.join(_repo_root, 'openint-graph'))
+if os.path.isdir(_openint_graph_path) and _openint_graph_path not in sys.path:
+    sys.path.insert(0, _openint_graph_path)
 
 # Semantic analysis: backend only calls modelmgmt-agent. Model loading, Redis, and annotation are done by the agent.
 MULTI_MODEL_AVAILABLE = False
@@ -1960,6 +1963,154 @@ def a2a_run():
             "modelmgmt_agent_time_ms": None,
             "error": str(e),
         }), 500
+
+
+# --- Neo4j Graph Demo (schema from DataHub + openint-testdata loader) ---
+NEO4J_CLIENT = None
+try:
+    from neo4j_client import get_neo4j_client
+    NEO4J_CLIENT = get_neo4j_client()
+except Exception as e:
+    get_logger(__name__).info("Neo4j graph demo: client not available (%s)", e)
+
+# Graph schema: nodes Customer, Transaction, Dispute; relationships HAS_TRANSACTION, OPENED_DISPUTE, REFERENCES (from DataHub + load_openint_data_to_neo4j)
+GRAPH_SCHEMA = {
+    "nodes": [
+        {"label": "Customer", "id_property": "id", "description": "Customer dimension (from DataHub customers schema)"},
+        {"label": "Transaction", "id_property": "id", "type_property": "type", "description": "Transaction facts: ach, wire, credit, debit, check (from DataHub fact tables)"},
+        {"label": "Dispute", "id_property": "id", "description": "Dispute fact (from DataHub disputes schema)"},
+    ],
+    "relationships": [
+        {"type": "HAS_TRANSACTION", "from": "Customer", "to": "Transaction", "description": "Customer has transactions"},
+        {"type": "OPENED_DISPUTE", "from": "Customer", "to": "Dispute", "description": "Customer opened a dispute"},
+        {"type": "REFERENCES", "from": "Dispute", "to": "Transaction", "description": "Dispute references a transaction"},
+    ],
+    "source": "DataHub schema (openint-datahub/schemas.py) + openint-testdata/loaders/load_openint_data_to_neo4j.py",
+}
+
+
+def _get_neo4j():
+    """Return Neo4j client (may be None)."""
+    global NEO4J_CLIENT
+    if NEO4J_CLIENT is not None:
+        return NEO4J_CLIENT
+    try:
+        from neo4j_client import get_neo4j_client
+        NEO4J_CLIENT = get_neo4j_client()
+    except Exception:
+        pass
+    return NEO4J_CLIENT
+
+
+@app.route('/api/graph/stats', methods=['GET'])
+def graph_stats():
+    """
+    Neo4j graph demo: connectivity and node/relationship counts.
+    Schema: Customer, Transaction, Dispute; HAS_TRANSACTION, OPENED_DISPUTE, REFERENCES.
+    Returns 200 with success: false when Neo4j is unavailable so the UI can show schema + message.
+    """
+    client = _get_neo4j()
+    if not client:
+        return jsonify({
+            "success": False,
+            "connected": False,
+            "error": "Neo4j client not available. Install neo4j driver and set NEO4J_URI/NEO4J_USER/NEO4J_PASSWORD.",
+            "node_counts": {},
+            "relationship_counts": {},
+        }), 200
+    try:
+        if not client.verify_connectivity():
+            return jsonify({
+                "success": False,
+                "connected": False,
+                "error": "Cannot connect to Neo4j. Check NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD.",
+                "node_counts": {},
+                "relationship_counts": {},
+            }), 200
+        # Node counts
+        counts = {}
+        for label in ("Customer", "Transaction", "Dispute"):
+            rows = client.run(f"MATCH (n:{label}) RETURN count(n) AS c")
+            counts[label] = (rows[0].get("c", 0) or 0) if rows else 0
+        # Relationship counts
+        rel_counts = {}
+        for rel in ("HAS_TRANSACTION", "OPENED_DISPUTE", "REFERENCES"):
+            rows = client.run(f"MATCH ()-[r:{rel}]->() RETURN count(r) AS c")
+            rel_counts[rel] = (rows[0].get("c", 0) or 0) if rows else 0
+        return jsonify({
+            "success": True,
+            "connected": True,
+            "node_counts": counts,
+            "relationship_counts": rel_counts,
+        })
+    except Exception as e:
+        logger.warning("Neo4j graph stats failed", extra={"error": str(e)})
+        return jsonify({
+            "success": False,
+            "connected": False,
+            "error": str(e),
+            "node_counts": {},
+            "relationship_counts": {},
+        }), 200
+
+
+@app.route('/api/graph/schema', methods=['GET'])
+def graph_schema():
+    """Neo4j graph demo: schema summary from DataHub + loader (nodes and relationship types)."""
+    return jsonify({
+        "success": True,
+        "schema": GRAPH_SCHEMA,
+    })
+
+
+@app.route('/api/graph/sample', methods=['GET'])
+def graph_sample():
+    """
+    Neo4j graph demo: sample data — disputes overview and customer–transaction–dispute paths.
+    Uses same Cypher patterns as graph_agent and loader schema.
+    Returns 200 with success: false and empty arrays when Neo4j is unavailable.
+    """
+    client = _get_neo4j()
+    if not client:
+        return jsonify({
+            "success": False,
+            "error": "Neo4j client not available",
+            "disputes_overview": [],
+            "paths": [],
+        }), 200
+    try:
+        if not client.verify_connectivity():
+            return jsonify({
+                "success": False,
+                "error": "Cannot connect to Neo4j",
+                "disputes_overview": [],
+                "paths": [],
+            }), 200
+        disputes_overview = client.run("""
+            MATCH (c:Customer)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(t:Transaction)
+            RETURN c.id AS customer_id, d.id AS dispute_id, t.id AS transaction_id,
+                   d.dispute_status AS status, d.amount_disputed AS amount_disputed, d.currency AS currency
+            LIMIT 25
+        """)
+        paths = client.run("""
+            MATCH path = (c:Customer)-[:HAS_TRANSACTION]->(t:Transaction)<-[:REFERENCES]-(d:Dispute)
+            RETURN c.id AS customer_id, t.id AS transaction_id, d.id AS dispute_id,
+                   t.amount AS tx_amount, d.amount_disputed, d.dispute_status
+            LIMIT 20
+        """)
+        return jsonify({
+            "success": True,
+            "disputes_overview": disputes_overview or [],
+            "paths": paths or [],
+        })
+    except Exception as e:
+        logger.warning("Neo4j graph sample failed", extra={"error": str(e)})
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "disputes_overview": [],
+            "paths": [],
+        }), 200
 
 
 @app.route('/api/suggestions/lucky', methods=['GET'])

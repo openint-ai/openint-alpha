@@ -419,3 +419,83 @@ export async function runA2A(sentenceCount = 3): Promise<A2ARunResponse> {
   }
   return data;
 }
+
+// --- Neo4j Graph Demo ---
+export interface GraphStats {
+  success: boolean;
+  connected: boolean;
+  node_counts?: Record<string, number>;
+  relationship_counts?: Record<string, number>;
+  error?: string;
+}
+
+export interface GraphSchemaNode {
+  label: string;
+  id_property: string;
+  type_property?: string;
+  description: string;
+}
+
+export interface GraphSchemaRel {
+  type: string;
+  from: string;
+  to: string;
+  description: string;
+}
+
+export interface GraphSchemaResponse {
+  success: boolean;
+  schema: {
+    nodes: GraphSchemaNode[];
+    relationships: GraphSchemaRel[];
+    source: string;
+  };
+}
+
+export interface GraphSampleResponse {
+  success: boolean;
+  disputes_overview: Array<{
+    customer_id?: string;
+    dispute_id?: string;
+    transaction_id?: string;
+    status?: string;
+    amount_disputed?: number;
+    currency?: string;
+  }>;
+  paths: Array<{
+    customer_id?: string;
+    transaction_id?: string;
+    dispute_id?: string;
+    tx_amount?: number;
+    amount_disputed?: number;
+    dispute_status?: string;
+  }>;
+  error?: string;
+}
+
+export async function fetchGraphStats(): Promise<GraphStats> {
+  const res = await fetch(`${API_BASE}/api/graph/stats`);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error((data as GraphStats).error || res.statusText || 'Graph stats failed');
+  }
+  return data as GraphStats;
+}
+
+export async function fetchGraphSchema(): Promise<GraphSchemaResponse> {
+  const res = await fetch(`${API_BASE}/api/graph/schema`);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(res.statusText || 'Graph schema failed');
+  }
+  return data as GraphSchemaResponse;
+}
+
+export async function fetchGraphSample(): Promise<GraphSampleResponse> {
+  const res = await fetch(`${API_BASE}/api/graph/sample`);
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error((data as GraphSampleResponse).error || res.statusText || 'Graph sample failed');
+  }
+  return data as GraphSampleResponse;
+}

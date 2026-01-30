@@ -6,6 +6,7 @@ import Layout from './components/Layout';
 import SemanticCompare from './components/SemanticCompare';
 import A2A from './components/A2A';
 import Chat from './components/Chat';
+import GraphDemo from './components/GraphDemo';
 import Help from './components/Help';
 import ApiDocs from './components/ApiDocs';
 import McpDocs from './components/McpDocs';
@@ -55,6 +56,7 @@ export default function App() {
         <Route path="/" element={<ErrorBoundary><Chat /></ErrorBoundary>} />
         <Route path="/compare" element={<SemanticCompare />} />
         <Route path="/a2a" element={<A2A />} />
+        <Route path="/graph" element={<GraphDemo />} />
         <Route path="/search" element={<Navigate to="/compare" replace />} />
         <Route path="/help" element={<Help />} />
         <Route path="/docs/api" element={<ApiDocs />} />

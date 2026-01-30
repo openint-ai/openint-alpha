@@ -17,7 +17,8 @@ except ImportError:
 class Neo4jClient:
     """
     Neo4j client for relationship and path queries.
-    Configured via NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD (defaults match docker-compose.datahub).
+    Defaults: bolt://localhost:7687, neo4j/datahub, database graph.db (Neo4j with DataHub on Docker).
+    Override via NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD, NEO4J_DATABASE.
     """
 
     def __init__(
@@ -25,23 +26,23 @@ class Neo4jClient:
         uri: Optional[str] = None,
         user: Optional[str] = None,
         password: Optional[str] = None,
-        database: str = "neo4j",
+        database: Optional[str] = None,
     ):
         """
         Initialize Neo4j client.
 
         Args:
-            uri: Bolt URI (default from NEO4J_URI or bolt://localhost:7687)
-            user: Username (default from NEO4J_USER or neo4j)
-            password: Password (default from NEO4J_PASSWORD or datahub)
-            database: Database name (default neo4j)
+            uri: Bolt URI (default NEO4J_URI or bolt://localhost:7687)
+            user: Username (default NEO4J_USER or neo4j)
+            password: Password (default NEO4J_PASSWORD or datahub)
+            database: Database name (default NEO4J_DATABASE or graph.db for DataHub Neo4j)
         """
         if not NEO4J_AVAILABLE:
             raise ImportError("neo4j driver not available. Install with: pip install neo4j")
         self._uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self._user = user or os.getenv("NEO4J_USER", "neo4j")
         self._password = password or os.getenv("NEO4J_PASSWORD", "datahub")
-        self._database = database or os.getenv("NEO4J_DATABASE", "neo4j")
+        self._database = database or os.getenv("NEO4J_DATABASE", "graph.db")
         self._driver = None
 
     def connect(self) -> None:
@@ -98,6 +99,10 @@ class Neo4jClient:
             return True
         except Exception:
             return False
+
+    def delete_all(self) -> None:
+        """Delete all nodes and relationships in the database. Use with caution."""
+        self.run("MATCH (n) DETACH DELETE n")
 
 
 def get_neo4j_client(

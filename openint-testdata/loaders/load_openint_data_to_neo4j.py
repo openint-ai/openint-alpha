@@ -1,8 +1,10 @@
 """
-Load openInt test data into Neo4j graph database.
-Reads fact/dimension CSVs, creates nodes (Customer, Transaction, Dispute) and
-relationships (HAS_TRANSACTION, OPENED_DISPUTE, REFERENCES).
-Uses the same testdata source as load_openint_data_to_milvus.py.
+Load openInt test data into Neo4j graph database (schema-driven, reverse lookup).
+Uses DataHub schema (openint-datahub/schemas.py) for field definitions.
+Order: (1) Load all transactions first, creating minimal Customer nodes from transaction
+customer_id and HAS_TRANSACTION; (2) Load disputes (OPENED_DISPUTE, REFERENCES); (3) Enrich
+Customer nodes from customers.csv only for customer_ids that appear in the facts.
+This avoids loading the full customers dimension; only customers with transactions/disputes get full attributes.
 """
 
 import os
@@ -12,13 +14,16 @@ import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
-# Resolve repo root and add openint-graph
+# Resolve repo root and add openint-graph + openint-datahub
 _repo_root = Path(__file__).resolve().parent.parent.parent
 if str(_repo_root) not in sys.path:
     sys.path.insert(0, str(_repo_root))
 openint_graph = _repo_root / "openint-graph"
 if openint_graph.exists() and str(openint_graph) not in sys.path:
     sys.path.insert(0, str(openint_graph))
+openint_datahub = _repo_root / "openint-datahub"
+if openint_datahub.exists() and str(openint_datahub) not in sys.path:
+    sys.path.insert(0, str(openint_datahub))
 
 try:
     from neo4j_client import Neo4jClient
@@ -29,6 +34,11 @@ except ImportError:
         print("Error: Could not import Neo4jClient. Ensure openint-graph is on PYTHONPATH.")
         sys.exit(1)
 
+try:
+    from schemas import get_dataset_schemas
+except ImportError:
+    get_dataset_schemas = None
+
 # Data directories (same layout as Milvus loader)
 BASE_DIR = Path("testdata")
 if not BASE_DIR.exists():
@@ -36,8 +46,59 @@ if not BASE_DIR.exists():
 DIMENSIONS_DIR = BASE_DIR / "dimensions"
 FACTS_DIR = BASE_DIR / "facts"
 
+# Schema-driven mapping: dataset_name -> (subdir, filename, node_label, id_property, type_property_value)
+# type_property_value only for Transaction nodes (ach, wire, credit, debit, check); None for Customer/Dispute
+LOAD_SPEC = {
+    "customers": ("dimensions", "customers.csv", "Customer", "customer_id", None),
+    "ach_transactions": ("facts", "ach_transactions.csv", "Transaction", "transaction_id", "ach"),
+    "wire_transactions": ("facts", "wire_transactions.csv", "Transaction", "transaction_id", "wire"),
+    "credit_transactions": ("facts", "credit_transactions.csv", "Transaction", "transaction_id", "credit"),
+    "debit_transactions": ("facts", "debit_transactions.csv", "Transaction", "transaction_id", "debit"),
+    "check_transactions": ("facts", "check_transactions.csv", "Transaction", "transaction_id", "check"),
+    "disputes": ("facts", "disputes.csv", "Dispute", "dispute_id", None),
+}
+
 # Batch size for Cypher UNWIND
 DEFAULT_BATCH = 5000
+
+
+def _schema_field_names(dataset_name: str) -> Optional[List[str]]:
+    """Return ordered field names for dataset from DataHub schema, or None if schema unavailable."""
+    if get_dataset_schemas is None:
+        return None
+    schemas = get_dataset_schemas()
+    if dataset_name not in schemas:
+        return None
+    return [f["name"] for f in schemas[dataset_name].get("fields", [])]
+
+
+def collect_customer_ids_from_facts(
+    facts_dir: Path,
+    dimensions_dir: Path,
+    max_transactions: Optional[int],
+    max_disputes: Optional[int],
+) -> set:
+    """Scan transaction and dispute CSVs and return the set of customer_ids that appear in facts."""
+    seen: set = set()
+    for dataset_name, spec in LOAD_SPEC.items():
+        if spec[2] == "Transaction":
+            subdir, fname, _, _, _ = spec
+            csv_path = (dimensions_dir if subdir == "dimensions" else facts_dir) / fname
+            if not csv_path.exists():
+                continue
+            df = pd.read_csv(csv_path, usecols=["customer_id"])
+            if max_transactions:
+                df = df.head(max_transactions)
+            seen.update(df["customer_id"].astype(str).unique())
+    # disputes
+    subdir, fname, _, _, _ = LOAD_SPEC["disputes"]
+    csv_path = (dimensions_dir if subdir == "dimensions" else facts_dir) / fname
+    if csv_path.exists():
+        df = pd.read_csv(csv_path, usecols=["customer_id"])
+        if max_disputes:
+            df = df.head(max_disputes)
+        seen.update(df["customer_id"].astype(str).unique())
+    return seen
 
 
 def _row_to_props(row: pd.Series, exclude: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -63,8 +124,9 @@ def load_customers(
     csv_path: Path,
     batch_size: int = DEFAULT_BATCH,
     max_records: Optional[int] = None,
+    schema_fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Load customers.csv into Customer nodes."""
+    """Load customers.csv into Customer nodes (schema-driven if schema_fields provided)."""
     if not csv_path.exists():
         return {"success": False, "error": "File not found"}
     print(f"\n📂 Loading Customers from {csv_path.name}...")
@@ -72,16 +134,20 @@ def load_customers(
         df = pd.read_csv(csv_path)
         if max_records:
             df = df.head(max_records)
+        # Property columns: schema fields present in CSV, excluding id key
+        id_key = "customer_id"
+        if schema_fields:
+            keys = [k for k in schema_fields if k != id_key and k in df.columns]
+        else:
+            keys = [k for k in df.columns if k != id_key]
         total = 0
         for start in range(0, len(df), batch_size):
             batch = df.iloc[start : start + batch_size]
             rows = []
             for _, row in batch.iterrows():
-                r = {"customer_id": str(row["customer_id"])}
-                r.update(_row_to_props(row, exclude=["customer_id"]))
+                r = {id_key: str(row[id_key])}
+                r.update(_row_to_props(row, exclude=[id_key]))
                 rows.append(r)
-            # Build SET from CSV columns (exclude customer_id used in MERGE)
-            keys = [k for k in batch.columns if k != "customer_id"]
             set_parts = [f"c.{k} = row.{k}" for k in keys]
             cypher = """
             UNWIND $rows AS row
@@ -97,14 +163,64 @@ def load_customers(
         return {"success": False, "error": str(e), "table_name": "customers"}
 
 
+def enrich_customers(
+    client: Neo4jClient,
+    csv_path: Path,
+    allowed_ids: set,
+    batch_size: int = DEFAULT_BATCH,
+    max_records: Optional[int] = None,
+    schema_fields: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Enrich existing Customer nodes (created from transactions) with attributes from customers.csv.
+    Only rows with customer_id in allowed_ids are applied; avoids loading the full dimension."""
+    if not csv_path.exists():
+        return {"success": False, "error": "File not found"}
+    print(f"\n📂 Enriching Customers from {csv_path.name} (only {len(allowed_ids):,} ids from facts)...")
+    try:
+        df = pd.read_csv(csv_path)
+        df = df[df["customer_id"].astype(str).isin(allowed_ids)]
+        if max_records:
+            df = df.head(max_records)
+        if df.empty:
+            print("   No customer rows in CSV matching fact customer_ids")
+            return {"success": True, "total_loaded": 0, "table_name": "customers_enrich"}
+        id_key = "customer_id"
+        if schema_fields:
+            keys = [k for k in schema_fields if k != id_key and k in df.columns]
+        else:
+            keys = [k for k in df.columns if k != id_key]
+        total = 0
+        for start in range(0, len(df), batch_size):
+            batch = df.iloc[start : start + batch_size]
+            rows = []
+            for _, row in batch.iterrows():
+                r = {id_key: str(row[id_key])}
+                r.update(_row_to_props(row, exclude=[id_key]))
+                rows.append(r)
+            set_parts = [f"c.{k} = row.{k}" for k in keys]
+            cypher = """
+            UNWIND $rows AS row
+            MATCH (c:Customer {id: row.customer_id})
+            SET """ + ", ".join(set_parts)
+            client.run(cypher, {"rows": rows})
+            total += len(rows)
+            print(f"   Progress: {total:,} customers enriched")
+        print(f"✅ Enriched {total:,} customers")
+        return {"success": True, "total_loaded": total, "table_name": "customers_enrich"}
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        return {"success": False, "error": str(e), "table_name": "customers_enrich"}
+
+
 def load_transactions(
     client: Neo4jClient,
     csv_path: Path,
     transaction_type: str,
     batch_size: int = DEFAULT_BATCH,
     max_records: Optional[int] = None,
+    schema_fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Load a transaction CSV into Transaction nodes and HAS_TRANSACTION relationships."""
+    """Load a transaction CSV into Transaction nodes and HAS_TRANSACTION (schema-driven if schema_fields)."""
     if not csv_path.exists():
         return {"success": False, "error": "File not found"}
     print(f"\n📂 Loading {transaction_type} from {csv_path.name}...")
@@ -112,8 +228,11 @@ def load_transactions(
         df = pd.read_csv(csv_path)
         if max_records:
             df = df.head(max_records)
-        cols = [c for c in df.columns if c in ("transaction_id", "customer_id")]
-        other = [c for c in df.columns if c not in ("transaction_id", "customer_id")]
+        exclude_keys = {"transaction_id", "customer_id"}
+        if schema_fields:
+            other = [k for k in schema_fields if k not in exclude_keys and k in df.columns]
+        else:
+            other = [c for c in df.columns if c not in exclude_keys]
         total = 0
         for start in range(0, len(df), batch_size):
             batch = df.iloc[start : start + batch_size]
@@ -135,12 +254,13 @@ def load_transactions(
                 rows.append(r)
             set_parts = [f"t.{k} = row.{k}" for k in other]
             set_clause = ", ".join(set_parts) if set_parts else "t.amount = row.amount"
+            # Create minimal Customer from transaction customer_id, then Transaction and HAS_TRANSACTION
             cypher = f"""
             UNWIND $rows AS row
+            MERGE (c:Customer {{id: row.customer_id}})
             MERGE (t:Transaction {{id: row.transaction_id, type: row.transaction_type}})
             SET {set_clause}
-            WITH t, row
-            MATCH (c:Customer {{id: row.customer_id}})
+            WITH c, t
             MERGE (c)-[:HAS_TRANSACTION]->(t)
             """
             client.run(cypher, {"rows": rows})
@@ -159,8 +279,9 @@ def load_disputes(
     csv_path: Path,
     batch_size: int = DEFAULT_BATCH,
     max_records: Optional[int] = None,
+    schema_fields: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Load disputes.csv into Dispute nodes, OPENED_DISPUTE and REFERENCES relationships."""
+    """Load disputes.csv into Dispute nodes, OPENED_DISPUTE and REFERENCES (schema-driven if schema_fields)."""
     if not csv_path.exists():
         return {"success": False, "error": "File not found"}
     print(f"\n📂 Loading Disputes from {csv_path.name}...")
@@ -168,7 +289,11 @@ def load_disputes(
         df = pd.read_csv(csv_path)
         if max_records:
             df = df.head(max_records)
-        other = [c for c in df.columns if c not in ("dispute_id", "customer_id", "transaction_id", "transaction_type")]
+        exclude_keys = {"dispute_id", "customer_id", "transaction_id", "transaction_type"}
+        if schema_fields:
+            other = [k for k in schema_fields if k not in exclude_keys and k in df.columns]
+        else:
+            other = [c for c in df.columns if c not in exclude_keys]
         total = 0
         for start in range(0, len(df), batch_size):
             batch = df.iloc[start : start + batch_size]
@@ -191,12 +316,13 @@ def load_disputes(
                 rows.append(r)
             set_parts = [f"d.{k} = row.{k}" for k in other]
             set_clause = ", ".join(set_parts) if set_parts else "d.amount_disputed = row.amount_disputed"
+            # Customer may already exist from transactions; MERGE so disputes-only customers get a node
             cypher = f"""
             UNWIND $rows AS row
+            MERGE (c:Customer {{id: row.customer_id}})
             MERGE (d:Dispute {{id: row.dispute_id}})
             SET {set_clause}
-            WITH d, row
-            MATCH (c:Customer {{id: row.customer_id}})
+            WITH c, d, row
             MERGE (c)-[:OPENED_DISPUTE]->(d)
             WITH d, row
             MATCH (t:Transaction {{id: row.transaction_id, type: row.transaction_type}})
@@ -215,7 +341,7 @@ def load_disputes(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Load openInt test data into Neo4j",
+        description="Load openInt test data into Neo4j (schema-driven from DataHub schema)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--data-dir", type=Path, default=None, help="Test data root (default: testdata or repo testdata)")
@@ -239,6 +365,10 @@ def main():
         print(f"❌ Data directory not found: {BASE_DIR}")
         return
 
+    schema = get_dataset_schemas() if get_dataset_schemas else None
+    if schema:
+        print("📋 Using DataHub schema (openint-datahub/schemas.py) for field definitions")
+
     print("=" * 60)
     print("🏦 Loading openInt test data into Neo4j")
     print("=" * 60)
@@ -255,42 +385,73 @@ def main():
         return
 
     results = []
-    load_cust = args.only_customers or (not args.only_transactions and not args.only_disputes)
     load_tx = args.only_transactions or (not args.only_customers and not args.only_disputes)
     load_disp = args.only_disputes or (not args.skip_disputes and not args.only_customers and not args.only_transactions)
+    # Reverse lookup: enrich customers only for ids that appear in facts (unless --only-customers)
+    load_cust_full = args.only_customers
+    load_cust_enrich = (not args.only_customers and not args.only_transactions and not args.only_disputes) or (load_tx or load_disp)
 
-    if load_cust:
-        r = load_customers(
-            client,
-            DIMENSIONS_DIR / "customers.csv",
-            batch_size=args.batch_size,
-            max_records=args.max_customers,
+    # Optional: collect customer_ids from facts so we only enrich those (avoids full customers.csv scan in memory for enrich)
+    allowed_customer_ids = set()
+    if load_cust_enrich and (load_tx or load_disp):
+        allowed_customer_ids = collect_customer_ids_from_facts(
+            FACTS_DIR, DIMENSIONS_DIR, args.max_transactions, args.max_disputes
         )
-        results.append(r)
+        print(f"📋 Reverse lookup: {len(allowed_customer_ids):,} distinct customer_ids from facts")
 
+    # (1) Transactions first: create minimal Customer + Transaction + HAS_TRANSACTION
     if load_tx:
-        for fname, ttype in [
-            ("ach_transactions.csv", "ach"),
-            ("wire_transactions.csv", "wire"),
-            ("credit_transactions.csv", "credit"),
-            ("debit_transactions.csv", "debit"),
-            ("check_transactions.csv", "check"),
-        ]:
+        for dataset_name, spec in LOAD_SPEC.items():
+            if spec[2] != "Transaction":
+                continue
+            subdir, fname, _, _, ttype = spec
+            csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
             r = load_transactions(
                 client,
-                FACTS_DIR / fname,
+                csv_path,
                 ttype,
                 batch_size=args.batch_size,
                 max_records=args.max_transactions,
+                schema_fields=_schema_field_names(dataset_name),
             )
             results.append(r)
 
-    if load_disp:
+    # (2) Disputes: OPENED_DISPUTE, REFERENCES (Customer MERGEd if not already present)
+    if load_disp and "disputes" in LOAD_SPEC:
+        subdir, fname, _, _, _ = LOAD_SPEC["disputes"]
+        csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
         r = load_disputes(
             client,
-            FACTS_DIR / "disputes.csv",
+            csv_path,
             batch_size=args.batch_size,
             max_records=args.max_disputes,
+            schema_fields=_schema_field_names("disputes"),
+        )
+        results.append(r)
+
+    # (3) Enrich Customer nodes from customers.csv only for customer_ids that appear in facts
+    if load_cust_enrich and allowed_customer_ids and "customers" in LOAD_SPEC:
+        subdir, fname, _, _, _ = LOAD_SPEC["customers"]
+        csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
+        r = enrich_customers(
+            client,
+            csv_path,
+            allowed_customer_ids,
+            batch_size=args.batch_size,
+            max_records=args.max_customers,
+            schema_fields=_schema_field_names("customers"),
+        )
+        results.append(r)
+    elif load_cust_full and "customers" in LOAD_SPEC:
+        # Legacy: load full customers dimension (--only-customers)
+        subdir, fname, _, _, _ = LOAD_SPEC["customers"]
+        csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
+        r = load_customers(
+            client,
+            csv_path,
+            batch_size=args.batch_size,
+            max_records=args.max_customers,
+            schema_fields=_schema_field_names("customers"),
         )
         results.append(r)
 

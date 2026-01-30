@@ -22,6 +22,9 @@ sentence-transformers>=2.2.0
 # openint-vectordb / search agent (Milvus): required so search_agent can import milvus_client
 pymilvus>=2.3.0
 
+# openint-graph / graph_agent (Neo4j): required so graph_agent can initialize Neo4j client
+neo4j>=5.0.0
+
 # LangGraph orchestration (select_agents -> run_agents -> aggregate) when backend runs agents
 langgraph>=0.2.0
 

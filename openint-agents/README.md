@@ -103,15 +103,15 @@ python server.py
 ### Communication
 
 - **A2A (Agent-to-Agent)** — When run via the OpenInt backend, **all agent communication** uses the A2A protocol (Agent Card + message/send). The LangGraph orchestrator invokes search_agent and graph_agent via `invoke_agent_via_a2a`; sg-agent and modelmgmt-agent are exposed as A2A endpoints.
-- **LangGraph** — Orchestration flow: select_agents → run_agents → aggregate. The backend registers agent instances with the A2A module and passes an A2A runner to the orchestrator so every agent call goes over A2A.
-- **Message bus** — Fallback pub/sub when not using LangGraph (e.g. standalone agent system).
+- **LangGraph (default)** — Orchestration defaults to LangGraph (select_agents → run_agents → aggregate). When agent_instances is provided, LangGraph is required; set `USE_LANGGRAPH=0` to allow message-bus fallback. The backend registers agent instances and passes an A2A runner so every agent call goes over A2A.
+- **Message bus** — Used only when agent_instances is not provided or `USE_LANGGRAPH=0`.
 - **Agent registry** — Service discovery and capabilities.  
 
 ---
 
 ## Running the agent system standalone
 
-Use this for **development** or **programmatic use** (e.g. scripting) when you don’t need the HTTP API.
+Use this for **development** or **programmatic use** (e.g. scripting). Orchestration uses **LangGraph by default** (requires `langgraph` in requirements) when you don’t need the HTTP API.
 
 ```bash
 cd openint-agents

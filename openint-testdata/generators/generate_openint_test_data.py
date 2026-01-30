@@ -1,9 +1,9 @@
 """
 openInt Test Data Generator
 Generates realistic openInt test data including:
-- Customer dimension table (1M records)
-- Transaction fact tables (ACH, Wire, Credit, etc.) - 10M records total
-- Dimension tables for static data (country codes, state codes, zip codes)
+- Customer dimension table (default 10K records; override with --num-customers)
+- Transaction fact tables (ACH, Wire, Credit, Debit, Check) for those customers only
+- Static dimension tables (country codes, state codes, zip codes)
 """
 
 import os
@@ -472,7 +472,7 @@ def generate_check_transactions(num_records, customer_ids, batch_size=None):
             payee_name = fake.name()
             memo = np.random.choice([
                 "Payment", "Rent", "Utilities", "Services", "Invoice Payment",
-                "Loan Payment", "Insurance", "Tax Payment", None
+                "Loan Payment", "Insurance", "Tax Payment"
             ], p=[0.2, 0.15, 0.15, 0.15, 0.1, 0.1, 0.1, 0.05])
             
             status = np.random.choice(
@@ -613,14 +613,14 @@ Examples:
     parser.add_argument(
         "--num-customers",
         type=int,
-        default=1000000,
-        help="Number of customer records to generate (default: 1,000,000)"
+        default=10_000,
+        help="Number of customer records to generate (default: 10,000)"
     )
     parser.add_argument(
         "--num-transactions",
         type=int,
-        default=10000000,
-        help="Total number of transactions to generate across all types (default: 10,000,000)"
+        default=100_000,
+        help="Total number of transactions to generate across all types, drawn from the customer set (default: 100,000)"
     )
     default_batch = _default_generate_batch_size()
     parser.add_argument(
