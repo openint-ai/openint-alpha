@@ -20,5 +20,4 @@ python-dotenv>=1.0.0
 # Utilities
 pydantic>=2.0.0
 
-# Optional: for sg-agent LLM-generated example sentences (set OPENAI_API_KEY)
-# openai>=1.0.0
+# sg-agent sentence generation uses Ollama (open-source LLM); no extra Python deps (urllib)

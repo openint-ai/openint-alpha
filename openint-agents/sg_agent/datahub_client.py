@@ -130,10 +130,21 @@ def get_schema() -> Dict[str, Dict[str, Any]]:
     Get dataset schema: from DataHub if available, else from openint-datahub/schemas.py.
     Returns dict mapping dataset name -> { description, category, fields }.
     """
+    schema, _ = get_schema_and_source()
+    return schema
+
+
+def get_schema_and_source() -> tuple[Dict[str, Dict[str, Any]], str]:
+    """
+    Get dataset schema and its source for LLM context.
+    Returns (schema, source) where source is "datahub" (DataHub assets and schema)
+    or "openint-datahub" (fallback when DataHub unavailable).
+    Ensures Ollama/LLM context is always provided via DataHub assets and schema when available.
+    """
     schema = get_schema_from_datahub()
     if schema:
         logger.debug("Loaded schema from DataHub (%s datasets)", len(schema))
-        return schema
+        return (schema, "datahub")
     schema = _load_schema_from_module()
     logger.debug("Loaded schema from openint-datahub/schemas.py (%s datasets)", len(schema))
-    return schema
+    return (schema, "openint-datahub")

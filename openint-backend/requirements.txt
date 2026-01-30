@@ -14,6 +14,13 @@ python-dotenv>=1.0.0
 # Utilities
 requests>=2.31.0
 redis>=5.0.0
+numpy>=1.24.0
+
+# modelmgmt-agent (semantic analysis): required so backend can import modelmgmt_agent.semantic_analyzer
+sentence-transformers>=2.2.0
+
+# openint-vectordb / search agent (Milvus): required so search_agent can import milvus_client
+pymilvus>=2.3.0
 
 # Observability: OpenTelemetry tracing + structured JSON logging
 opentelemetry-api>=1.27.0

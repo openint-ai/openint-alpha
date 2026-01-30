@@ -338,17 +338,25 @@ export interface LuckySuggestion {
   success: boolean;
   sentence?: string;
   category?: string;
-  /** "openai" or "template" */
+  /** "ollama" or "template" */
   source?: string;
-  /** When source is "openai", the model name (e.g. gpt-4o-mini) */
+  /** When source is "ollama", the model name (e.g. llama3.2) */
   llm_model?: string;
+  /** Time in ms for sg-agent to generate the sentence (schema + LLM/template) */
+  sg_agent_time_ms?: number;
   error?: string;
 }
 
 export async function getLuckySuggestion(): Promise<LuckySuggestion> {
   log.debug('Lucky suggestion request', { url: '/api/suggestions/lucky' });
   const res = await fetch(`${API_BASE}/api/suggestions/lucky`, { method: 'GET' });
-  const data = (await res.json()) as LuckySuggestion;
+  const text = await res.text();
+  let data: LuckySuggestion;
+  try {
+    data = (text ? JSON.parse(text) : {}) as LuckySuggestion;
+  } catch {
+    throw new Error(res.ok ? 'Invalid response from server' : (res.statusText || `Request failed (${res.status})`));
+  }
   if (!res.ok) {
     throw new Error(data.error || res.statusText || 'Failed to get suggestion');
   }

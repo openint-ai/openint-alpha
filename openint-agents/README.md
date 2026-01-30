@@ -98,6 +98,7 @@ python server.py
 - **Search Agent** — Semantic search in Milvus vector DB  
 - **Graph Agent** — Graph/relationship queries  
 - **Schema Generator Agent (sg-agent)** — DataHub-backed schema and example sentences  
+- **Model Management Agent (modelmgmt-agent)** — Hugging Face + Redis model registry; annotates sentences with semantic tags  
 
 ### Communication
 
@@ -136,7 +137,7 @@ In production, the **backend** runs the orchestrator and agents; clients use the
 
 ## Environment
 
-- **openint-agents:** Optional `.env` for Milvus, OpenAI (sg-agent), etc.  
+- **openint-agents:** Optional `.env` for Milvus, Ollama (sg-agent), etc.  
 - **openint-backend:** Uses same env; ensure backend can resolve `openint-agents` (e.g. repo layout or `PYTHONPATH`).  
 - **openint-mcp:** `OPENINT_BACKEND_URL` (default `http://localhost:3001`).
 
@@ -144,4 +145,4 @@ In production, the **backend** runs the orchestrator and agents; clients use the
 
 ## Adding or changing agents
 
-See `agents/README.md` (if present) and the `agents/` and `sg_agent/` packages for implementing new agents and registering them with the orchestrator in `main.py`.
+See `agents/README.md` (if present) and the `agents/`, `sg_agent/`, and `modelmgmt_agent/` packages for implementing new agents and registering them with the orchestrator in `main.py`. **modelmgmt-agent** provides the model registry and semantic annotation used by the backend for `/api/semantic/*`.

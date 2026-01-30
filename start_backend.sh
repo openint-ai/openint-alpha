@@ -46,40 +46,48 @@ check_port() {
 # Navigate to backend directory
 cd openint-backend
 
-# Create virtual environment if needed
+# Create virtual environment if needed, or recreate if interpreter path is broken (e.g. moved project)
 if [ ! -d "venv" ]; then
     echo -e "${YELLOW}Creating virtual environment...${NC}"
     python3 -m venv venv
+else
+    if ! venv/bin/python3 -c "import sys" 2>/dev/null; then
+        echo -e "${YELLOW}Removing broken venv (bad interpreter path)...${NC}"
+        rm -rf venv requirements_installed.flag
+        echo -e "${YELLOW}Creating fresh virtual environment...${NC}"
+        python3 -m venv venv
+    fi
 fi
 
-# Activate virtual environment
-source venv/bin/activate
+# Use venv binaries explicitly (avoids system pip / PEP 668)
+VENV_PYTHON="venv/bin/python3"
+VENV_PIP="venv/bin/pip"
 
 # Install dependencies if needed
 if [ ! -f "requirements_installed.flag" ]; then
-    echo -e "${YELLOW}Installing dependencies...${NC}"
-    pip install -q -r requirements.txt
+    echo -e "${YELLOW}Installing dependencies into venv...${NC}"
+    "$VENV_PIP" install -q -r requirements.txt
     touch requirements_installed.flag
 else
     # Verify critical dependencies are installed (flask_cors, redis for model registry + chat cache)
-    if ! python3 -c "import flask_cors" 2>/dev/null || ! python3 -c "import redis" 2>/dev/null; then
+    if ! "$VENV_PYTHON" -c "import flask_cors" 2>/dev/null || ! "$VENV_PYTHON" -c "import redis" 2>/dev/null; then
         echo -e "${YELLOW}Missing dependencies detected, reinstalling...${NC}"
-        pip install -q -r requirements.txt
+        "$VENV_PIP" install -q -r requirements.txt
         touch requirements_installed.flag
     fi
 fi
 
 # Double-check flask_cors is available
-if ! python3 -c "import flask_cors" 2>/dev/null; then
+if ! "$VENV_PYTHON" -c "import flask_cors" 2>/dev/null; then
     echo -e "${RED}❌ flask_cors still not available after installation${NC}"
-    echo -e "${YELLOW}   Trying to install directly...${NC}"
-    pip install flask-cors
+    echo -e "${YELLOW}   Trying to install directly into venv...${NC}"
+    "$VENV_PIP" install -q flask-cors
 fi
 
 # Ensure redis is available (model registry + chat cache)
-if ! python3 -c "import redis" 2>/dev/null; then
-    echo -e "${YELLOW}Installing redis (required for model registry and chat cache)...${NC}"
-    python3 -m pip install -q "redis>=5.0.0"
+if ! "$VENV_PYTHON" -c "import redis" 2>/dev/null; then
+    echo -e "${YELLOW}Installing redis into venv (required for model registry and chat cache)...${NC}"
+    "$VENV_PIP" install -q "redis>=5.0.0"
 fi
 
 # Check if backend is already running and kill it
@@ -109,4 +117,4 @@ echo -e "${GREEN}Starting backend on port $PORT...${NC}"
 echo -e "${BLUE}Backend URL: http://localhost:$PORT${NC}"
 echo ""
 
-python3 main.py
+"$VENV_PYTHON" main.py

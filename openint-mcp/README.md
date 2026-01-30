@@ -5,7 +5,7 @@ This MCP (Model Context Protocol) server exposes the **OpenInt semantic layer** 
 ## Prerequisites
 
 - Python 3.10+
-- **OpenInt backend** running and reachable (e.g. `http://localhost:3001`). The MCP server calls the backend HTTP API; it does not run embedding models itself.
+- **OpenInt backend** running and reachable (e.g. `http://localhost:3001`). The MCP server calls the backend HTTP API; it does not run embedding models itself. The backend uses **modelmgmt-agent** for semantic interpretation when the agent system is loaded.
 
 ## Install
 

@@ -5,42 +5,29 @@ Performs semantic search in Milvus vector database
 
 import sys
 import os
+import logging
 from typing import Dict, List, Any
 
-# Add parent directory to path to import milvus_client
-parent_dir = os.path.join(os.path.dirname(__file__), '../../')
-sys.path.insert(0, parent_dir)
+logger = logging.getLogger(__name__)
+
+# Resolve repo root (openint-agents/agents -> ../../ = repo root) and add openint-vectordb/milvus to path
+_agents_file = os.path.abspath(__file__)
+_repo_root = os.path.abspath(os.path.join(os.path.dirname(_agents_file), '..', '..'))
+_vectordb_milvus = os.path.join(_repo_root, 'openint-vectordb', 'milvus')
+if os.path.isdir(_vectordb_milvus) and _vectordb_milvus not in sys.path:
+    sys.path.insert(0, _vectordb_milvus)
 
 try:
-    # Import from openint-vectordb package (handle hyphenated directory name)
-    vectordb_path = os.path.join(parent_dir, 'openint-vectordb')
-    if vectordb_path not in sys.path:
-        sys.path.insert(0, vectordb_path)
-    # Import using the milvus subdirectory
-    sys.path.insert(0, os.path.join(vectordb_path, 'milvus'))
     from milvus_client import MilvusClient
 except ImportError:
-    # Try alternative path
-    try:
-        root_dir = os.path.join(os.path.dirname(__file__), '../../../')
-        vectordb_path = os.path.join(root_dir, 'openint-vectordb', 'milvus')
-        sys.path.insert(0, vectordb_path)
-        from milvus_client import MilvusClient
-    except ImportError:
-        # Fallback if milvus_client is not available
-        MilvusClient = None
-        logger.warning("milvus_client not found; search agent will not work")
+    MilvusClient = None
+    logger.warning("milvus_client not found; search agent will not work")
 
-import sys
-import os
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import logging
 from agents.base_agent import BaseAgent, AgentResponse
 from communication.agent_registry import AgentCapability
-
-logger = logging.getLogger(__name__)
 
 
 class SearchAgent(BaseAgent):

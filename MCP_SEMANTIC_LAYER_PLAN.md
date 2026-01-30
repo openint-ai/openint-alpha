@@ -26,7 +26,7 @@ openint-backend (existing Flask API)
 ```
 
 - **MCP server**: Lightweight; no embedding models. It forwards tool calls to the backend API.
-- **Backend**: Keeps all semantic logic (multi_model_semantic, sentence-transformers). No change to existing APIs.
+- **Backend**: Uses **modelmgmt-agent** (openint-agents) for semantic logic when agents are loaded; otherwise falls back to local multi_model_semantic and model_registry. No change to existing APIs.
 
 ---
 
@@ -52,7 +52,7 @@ Tool descriptions (docstrings) should be clear so the agent knows when to call t
 ### 2. MCP server embeds semantic logic (alternative)
 
 - **Pros**: Single process; works without a separate backend.
-- **Cons**: Duplicates logic; MCP process must load sentence-transformers and multi_model_semantic; heavier and slower to start.
+- **Cons**: Duplicates logic; MCP process would need sentence-transformers and semantic analyzer (modelmgmt-agent or multi_model_semantic); heavier and slower to start.
 - **When**: Use only if you need the MCP server to run standalone (e.g. no network to backend).
 
 **Recommendation**: Implement (1) first; document (2) as a future option.

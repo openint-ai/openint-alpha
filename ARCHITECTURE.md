@@ -50,7 +50,8 @@ openint-alpha/
 ### openInt-agents
 - **Purpose**: AI agent system with multi-agent collaboration
 - **Responsibilities**:
-  - Agent implementations (search, analysis, recommendation)
+  - Agent implementations (search, graph, sg-agent, modelmgmt-agent)
+  - **modelmgmt-agent**: Model registry (Hugging Face + Redis), sentence semantic annotation; backend uses it for semantic API when agents are loaded
   - Agent communication framework
   - Milvus integration for vector search
   - Agent orchestration and coordination

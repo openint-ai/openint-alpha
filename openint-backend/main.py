@@ -7,6 +7,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import hashlib
 import json
+import logging
 import os
 import re
 import sys
@@ -24,9 +25,14 @@ except ImportError:
         logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 
 # Hugging Face token (before any HF download): enables higher rate limits and faster downloads; suppresses unauthenticated warning
+# Load .env from repo root and from backend dir so OLLAMA_HOST, OLLAMA_MODEL, HF_TOKEN, etc. are available
+current_file = os.path.abspath(__file__)
+_backend_dir = os.path.dirname(current_file)
+_repo_root = os.path.abspath(os.path.join(_backend_dir, ".."))
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(os.path.join(_repo_root, ".env"))  # repo root (e.g. when using start_backend.sh)
+    load_dotenv(os.path.join(_backend_dir, ".env"))  # openint-backend/.env
 except ImportError:
     pass
 _hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
@@ -37,48 +43,56 @@ if _hf_token and _hf_token.strip():
     except Exception:
         pass
 
-# Import multi-model semantic analyzer
-try:
-    from multi_model_semantic import get_analyzer, analyze_query_multi_model
-    from sentence_transformers import SentenceTransformer
-    MULTI_MODEL_AVAILABLE = True
-    # Suppress HuggingFace "LOAD REPORT" and "embeddings.position_ids | UNEXPECTED" (benign) in terminal
-    try:
-        import transformers
-        transformers.logging.set_verbosity_error()
-    except Exception:
-        pass
-except ImportError as e:
-    MULTI_MODEL_AVAILABLE = False
-    SentenceTransformer = None
-    get_logger(__name__).warning("Multi-model semantic analysis not available", extra={"error": str(e)})
-
-
-def _load_embedding_model(model_name: str):
-    """
-    Load a SentenceTransformer model. Uses Redis model registry when available so models
-    are downloaded once from Hugging Face and stored in Redis (localhost:6379); subsequent
-    loads hydrate from Redis. Falls back to direct Hugging Face load if Redis is unavailable.
-    """
-    try:
-        from model_registry import load_model_from_registry
-        model = load_model_from_registry(model_name)
-        if model is not None:
-            return model
-    except ImportError:
-        pass
-    if SentenceTransformer is None:
-        return None
-    return SentenceTransformer(model_name)
-
-# Add agent system to path (in production, use proper package management)
-# Get the directory where this file is located
-current_file = os.path.abspath(__file__)
-current_dir = os.path.dirname(current_file)
-# Go up two levels: openint-backend -> openint-alpha -> openint-agents
-agent_system_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-agents'))
+# Add openint-agents and openint-vectordb to path so modelmgmt-agent and search_agent (milvus_client) resolve
+current_dir = _backend_dir
+_repo_root = os.path.abspath(os.path.join(current_dir, '..'))
+agent_system_path = os.path.abspath(os.path.join(_repo_root, 'openint-agents'))
 if agent_system_path not in sys.path:
     sys.path.insert(0, agent_system_path)
+_vectordb_milvus_path = os.path.abspath(os.path.join(_repo_root, 'openint-vectordb', 'milvus'))
+if os.path.isdir(_vectordb_milvus_path) and _vectordb_milvus_path not in sys.path:
+    sys.path.insert(0, _vectordb_milvus_path)
+
+# Semantic analysis: backend only calls modelmgmt-agent. Model loading, Redis, and annotation are done by the agent.
+MULTI_MODEL_AVAILABLE = False
+get_analyzer = None
+analyze_query_multi_model = None
+MODEL_METADATA = []
+DROPDOWN_MODEL_IDS = []
+
+try:
+    from modelmgmt_agent.semantic_analyzer import (
+        get_analyzer as _get_analyzer,
+        analyze_query_multi_model as _analyze_multi,
+        MODEL_METADATA as _MODEL_METADATA,
+        DROPDOWN_MODEL_IDS as _DROPDOWN_MODEL_IDS,
+    )
+    get_analyzer = _get_analyzer
+    analyze_query_multi_model = _analyze_multi
+    MODEL_METADATA = _MODEL_METADATA
+    DROPDOWN_MODEL_IDS = _DROPDOWN_MODEL_IDS
+    MULTI_MODEL_AVAILABLE = True
+except ImportError as e:
+    get_logger(__name__).warning(
+        "modelmgmt-agent not available; semantic endpoints will return 503. Install openint-agents and ensure modelmgmt_agent is on path.",
+        extra={"error": str(e)},
+    )
+
+
+def _get_embedding_model_from_modelmgmt(model_name: str):
+    """
+    Return a SentenceTransformer model only if modelmgmt-agent has loaded it (Redis/HF).
+    Backend does not load models; modelmgmt-agent owns all downloads and Redis.
+    """
+    if not get_analyzer or model_name not in DROPDOWN_MODEL_IDS:
+        return None
+    logger.info(
+        "modelmgmt-agent: loading embedding models (preload=True). models=%s",
+        DROPDOWN_MODEL_IDS,
+    )
+    analyzer = get_analyzer(models=DROPDOWN_MODEL_IDS, preload=True)
+    return analyzer.loaded_models.get(model_name) if analyzer else None
+
 
 # Try to import agent system
 AgentOrchestrator = None
@@ -117,33 +131,7 @@ app = Flask(__name__)
 CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
 CORS(app, origins=CORS_ORIGINS)
 
-# Supported semantic models (same as UI dropdown). Used for interpret-all and models-with-meta.
-MODEL_METADATA = [
-    {
-        "id": "mukaj/fin-mpnet-base",
-        "display_name": "Finance MPNet",
-        "author": "mukaj",
-        "description": "Fin-MPNET-Base: state-of-the-art for financial documents (79.91 FiQA). Fine-tuned from all-mpnet-base-v2 on 150k+ financial QA examples. Downloaded from https://huggingface.co/mukaj/fin-mpnet-base when this option is selected; stored in Redis when the model registry is enabled.",
-        "details": "768 dimensions · Fast · Use for banking/finance semantic search.",
-        "url": "https://huggingface.co/mukaj/fin-mpnet-base",
-    },
-    {
-        "id": "ProsusAI/finbert",
-        "display_name": "FinBERT",
-        "author": "Prosus AI",
-        "description": "FinBERT: financial sentiment analysis. Pre-trained BERT fine-tuned on Financial PhraseBank. Downloaded from https://huggingface.co/ProsusAI/finbert when this option is selected.",
-        "details": "Finance domain · Sentiment (positive/negative/neutral) · Use for financial text understanding.",
-        "url": "https://huggingface.co/ProsusAI/finbert",
-    },
-    {
-        "id": "sentence-transformers/all-mpnet-base-v2",
-        "display_name": "General MPNet",
-        "author": "sentence-transformers",
-        "description": "Popular, powerful open source model. Strong general-purpose embeddings (768d). Good balance of quality and speed.",
-        "details": "768 dimensions · Popular · Use for general semantic tasks.",
-        "url": "https://huggingface.co/sentence-transformers/all-mpnet-base-v2",
-    },
-]
+# MODEL_METADATA and DROPDOWN_MODEL_IDS are imported from modelmgmt_agent when available (single source of truth for the 3 UI dropdown models).
 
 # Observability: JSON logging + OpenTelemetry tracing (idempotent)
 setup_observability(app)
@@ -216,46 +204,7 @@ def handle_uncaught(e):
         "query_time_ms": 0,
     }), 500
 
-# Model IDs used in the Compare/Chat dropdown; single source of truth for bootstrap preload
-DROPDOWN_MODEL_IDS = [m["id"] for m in MODEL_METADATA]
-
-
-def preload_embedding_models():
-    """
-    Preload all dropdown embedding models at server bootstrap.
-    Uses the Redis model registry: if a model is already in Redis, load from Redis (no download).
-    If not in Redis, download from Hugging Face once and store in Redis for future boots.
-    These models are then used to compare semantic annotations across models for a given sentence.
-    """
-    if not MULTI_MODEL_AVAILABLE:
-        logger.warning("Multi-model semantic analysis not available - skipping model preload")
-        return
-    logger.info(
-        "Preloading dropdown models at bootstrap (Redis: use if present, else download once and store)",
-        extra={"models": DROPDOWN_MODEL_IDS},
-    )
-    try:
-        analyzer = get_analyzer(models=DROPDOWN_MODEL_IDS, preload=True)
-        if analyzer:
-            loaded_count = len(analyzer.loaded_models)
-            if loaded_count > 0:
-                logger.info(
-                    "Preloaded embedding models for Compare",
-                    extra={
-                        "count": loaded_count,
-                        "models": list(analyzer.loaded_models.keys()),
-                        "dimensions": {
-                            n: m.get_sentence_embedding_dimension()
-                            for n, m in analyzer.loaded_models.items()
-                        },
-                    },
-                )
-            else:
-                logger.warning("No embedding models were loaded at bootstrap")
-        else:
-            logger.warning("Could not initialize analyzer for preloading")
-    except Exception as e:
-        logger.warning("Error preloading models", extra={"error": str(e)}, exc_info=True)
+# Model loading and Redis are handled by modelmgmt-agent on first semantic request; backend does not preload.
 
 # Initialize orchestrator and agents
 orchestrator: Optional[Any] = None
@@ -269,15 +218,18 @@ if AGENT_SYSTEM_AVAILABLE:
             from agents.search_agent import SearchAgent
             from agents.graph_agent import GraphAgent
             from sg_agent.schema_generator_agent import SchemaGeneratorAgent
+            from modelmgmt_agent.modelmgmt_agent import ModelMgmtAgent
             search_agent = SearchAgent()
             _agent_instances.append(search_agent)
             graph_agent = GraphAgent()
             _agent_instances.append(graph_agent)
             sg_agent = SchemaGeneratorAgent()
             _agent_instances.append(sg_agent)
+            modelmgmt_agent = ModelMgmtAgent()
+            _agent_instances.append(modelmgmt_agent)
             agents = orchestrator.registry.list_agents()
             logger.info(
-                "Initialized agents (search, graph, sg-agent)",
+                "Initialized agents (search, graph, sg-agent, modelmgmt-agent)",
                 extra={
                     "agent_count": len(agents),
                     "subscribers": list(orchestrator.message_bus._subscribers.keys()),
@@ -352,12 +304,10 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
                     }
                     best_model = selected_model
                 else:
-                    # Model not loaded, try to load it (from Redis registry when available)
+                    # Get model from modelmgmt-agent (already loads via Redis/HF)
                     try:
-                        loaded = _load_embedding_model(selected_model)
+                        loaded = _get_embedding_model_from_modelmgmt(selected_model)
                         if loaded is not None:
-                            analyzer.loaded_models[selected_model] = loaded
-                            analyzer._models_loaded = True
                             model = loaded
                             embedding = model.encode(query, convert_to_numpy=True)
                             semantic_analysis = analyzer._extract_semantic_tags(query, selected_model, embedding)
@@ -407,9 +357,11 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
             # Check if analyzer is already loaded (don't trigger loading here)
             analyzer = get_analyzer()
             if analyzer and hasattr(analyzer, '_models_loaded') and analyzer._models_loaded:
+                logger.info("modelmgmt-agent: running semantic analysis for chat debug (best_model)")
                 multi_model_result = analyzer.analyze_query(query, parallel=True)
                 if multi_model_result and multi_model_result.get("best_model"):
                     best_model = multi_model_result["best_model"]
+                    logger.info("modelmgmt-agent: semantic analysis completed for chat debug", extra={"best_model": best_model})
         except Exception as e:
             # Silently skip if analyzer not ready - don't block debug output
             pass
@@ -824,10 +776,10 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
             sys.path.insert(0, vectordb_path)
         
         try:
-            # Try to use finance model directly if available
-            if MULTI_MODEL_AVAILABLE and SentenceTransformer:
+            # Use finance model via modelmgmt-agent (no direct loading in backend)
+            if MULTI_MODEL_AVAILABLE:
                 try:
-                    model = _load_embedding_model(finance_model)
+                    model = _get_embedding_model_from_modelmgmt(finance_model)
                     if model is not None:
                         query_vector = model.encode(query, convert_to_numpy=True).tolist()
                         embedding_dims = len(query_vector)
@@ -903,7 +855,7 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    """Health check endpoint. Includes Redis cache and model registry status (REDIS_HOST:REDIS_PORT)."""
+    """Health check. Redis cache is for chat; model loading/Redis is owned by modelmgmt-agent."""
     redis_client = get_redis()
     redis_ok = redis_client is not None
     try:
@@ -911,30 +863,15 @@ def health():
     except Exception:
         redis_ok = False
 
-    # Model registry uses same Redis; check without caching a client
-    try:
-        from model_registry import check_redis_registry
-        model_reg_ok, model_reg_host, model_reg_port, model_reg_err = check_redis_registry()
-    except Exception as e:
-        model_reg_ok = False
-        model_reg_host = os.getenv("REDIS_HOST", REDIS_DEFAULT_HOST)
-        model_reg_port = int(os.getenv("REDIS_PORT") or REDIS_DEFAULT_PORT)
-        model_reg_err = str(e)
-
     return jsonify({
         "status": "healthy",
         "agent_system": AGENT_SYSTEM_AVAILABLE,
         "orchestrator_ready": orchestrator is not None,
+        "modelmgmt_agent_available": MULTI_MODEL_AVAILABLE,
         "redis_cache": {
             "connected": redis_ok,
             "host": os.getenv("REDIS_HOST", REDIS_DEFAULT_HOST),
             "port": int(os.getenv("REDIS_PORT") or REDIS_DEFAULT_PORT),
-        },
-        "redis_model_registry": {
-            "connected": model_reg_ok,
-            "host": model_reg_host,
-            "port": model_reg_port,
-            "error": model_reg_err if not model_reg_ok else None,
         },
     })
 
@@ -1041,7 +978,6 @@ def chat():
         query_id = result.get("query_id")
         if query_id:
             # Wait for agents to respond (in production, use async/await or polling)
-            import time
             max_wait = 10  # seconds
             wait_interval = 0.05  # seconds - check every 50ms for faster pickup once agents complete
             waited = 0
@@ -1465,7 +1401,7 @@ def get_query_result(query_id: str):
 @app.route('/api/semantic/analyze', methods=['POST'])
 def analyze_semantics():
     """
-    Multi-model semantic analysis endpoint.
+    Semantic analysis via modelmgmt-agent (all 3 dropdown models).
     
     Request body:
     {
@@ -1496,7 +1432,7 @@ def analyze_semantics():
     """
     if not MULTI_MODEL_AVAILABLE:
         return jsonify({
-            "error": "Multi-model semantic analysis not available",
+            "error": "modelmgmt-agent not available",
             "message": "Install sentence-transformers: pip install sentence-transformers"
         }), 503
     
@@ -1507,16 +1443,25 @@ def analyze_semantics():
     query = data["query"]
     models = data.get("models")  # Optional: specific models
     parallel = data.get("parallel", True)
-    
+    model_list = models if models else DROPDOWN_MODEL_IDS
+    logger.info(
+        "modelmgmt-agent: running semantic analysis (POST /api/semantic/analyze). models=%s",
+        model_list,
+    )
     try:
         result = analyze_query_multi_model(query, models=models, parallel=parallel)
+        models_analyzed = result.get("models_analyzed", 0) or len(result.get("models") or {})
+        logger.info(
+            "modelmgmt-agent: semantic analysis completed (POST /api/semantic/analyze)",
+            extra={"models_analyzed": models_analyzed},
+        )
         return jsonify({
             "success": True,
             **result
         })
     except Exception as e:
         error_msg = str(e)
-        logger.error("Error in semantic analysis", extra={"error": error_msg, "query": query}, exc_info=True)
+        logger.error("modelmgmt-agent: semantic analysis failed", extra={"error": error_msg, "query_preview": (query or "")[:100]}, exc_info=True)
         return jsonify({
             "success": False,
             "error": error_msg,
@@ -1526,16 +1471,18 @@ def analyze_semantics():
 
 @app.route('/api/semantic/models', methods=['GET'])
 def list_semantic_models():
-    """List available models for multi-model semantic analysis."""
+    """List available models (from modelmgmt-agent; the 3 dropdown models)."""
     if not MULTI_MODEL_AVAILABLE:
         return jsonify({
-            "error": "Multi-model semantic analysis not available",
+            "error": "modelmgmt-agent not available",
             "models": []
         }), 503
 
     try:
+        logger.info("modelmgmt-agent: listing loaded models (GET /api/semantic/models)")
         analyzer = get_analyzer()
         model_info = analyzer.get_model_info()
+        logger.info("modelmgmt-agent: listed %s model(s)", len(model_info))
         return jsonify({
             "success": True,
             "models": model_info,
@@ -1551,7 +1498,14 @@ def list_semantic_models():
 
 @app.route('/api/semantic/models-with-meta', methods=['GET'])
 def list_semantic_models_with_meta():
-    """List supported models with metadata: id, display_name, author, description, details, url. Use these ids as the 'model' parameter in interpret/preview APIs."""
+    """List supported models with metadata (from modelmgmt-agent). Use these ids as the 'model' parameter in interpret/preview APIs."""
+    if not MULTI_MODEL_AVAILABLE:
+        return jsonify({
+            "success": False,
+            "error": "modelmgmt-agent not available",
+            "models": [],
+            "count": 0,
+        }), 503
     return jsonify({
         "success": True,
         "models": MODEL_METADATA,
@@ -1567,7 +1521,7 @@ def _run_semantic_interpret(query: str, model_name: str) -> tuple:
     if not MULTI_MODEL_AVAILABLE:
         return {
             "success": False,
-            "error": "Multi-model semantic analysis not available"
+            "error": "modelmgmt-agent not available"
         }, 503
 
     default_model = "mukaj/fin-mpnet-base"
@@ -1585,27 +1539,23 @@ def _run_semantic_interpret(query: str, model_name: str) -> tuple:
         }, 200
 
     try:
-        analyzer = get_analyzer()
+        if model_name not in DROPDOWN_MODEL_IDS:
+            return {
+                "success": False,
+                "error": f"Model {model_name!r} not supported. Use one of: {', '.join(DROPDOWN_MODEL_IDS)}",
+            }, 400
+        logger.info(
+            "modelmgmt-agent: loading embedding models (preload=True) for semantic interpret. models=%s",
+            DROPDOWN_MODEL_IDS,
+        )
+        analyzer = get_analyzer(models=DROPDOWN_MODEL_IDS, preload=True)
         if not analyzer:
-            return {"success": False, "error": "Analyzer not available"}, 503
-
+            return {"success": False, "error": "modelmgmt-agent not available"}, 503
         if model_name not in analyzer.loaded_models:
-            try:
-                model = _load_embedding_model(model_name)
-                if model is not None:
-                    analyzer.loaded_models[model_name] = model
-                    analyzer._models_loaded = True
-                else:
-                    return {
-                        "success": False,
-                        "error": f"Could not load model {model_name}. Try another model or check backend logs."
-                    }, 503
-            except Exception as e:
-                logger.warning("Could not load semantic model", extra={"model": model_name, "error": str(e)})
-                return {
-                    "success": False,
-                    "error": f"Could not load model {model_name}. Try another model or check backend logs."
-                }, 503
+            return {
+                "success": False,
+                "error": f"Model {model_name!r} not loaded by modelmgmt-agent. Check backend logs.",
+            }, 503
 
         model = analyzer.loaded_models[model_name]
         t0 = time.perf_counter()
@@ -1622,7 +1572,11 @@ def _run_semantic_interpret(query: str, model_name: str) -> tuple:
             return {"success": False, "error": f"Analysis failed: {str(e)}"}, 500
 
         semantic_annotation_time_ms = round((time.perf_counter() - t0) * 1000)
-
+        logger.info(
+            "modelmgmt-agent: semantic interpret completed for model %s",
+            model_name,
+            extra={"time_ms": semantic_annotation_time_ms},
+        )
         token_semantics = []
         query_words = re.findall(r'\b\w+\b', query.lower())
         for word in query_words:
@@ -1646,7 +1600,7 @@ def _run_semantic_interpret(query: str, model_name: str) -> tuple:
         }, 200
     except Exception as e:
         error_msg = str(e)
-        logger.error("Error in semantic interpret", extra={"error": error_msg, "query": query, "model": model_name}, exc_info=True)
+        logger.error("Error in semantic interpret", extra={"error": error_msg, "query_preview": (query or "")[:100], "model": model_name}, exc_info=True)
         return {"success": False, "error": error_msg, "query": query, "model": model_name}, 500
 
 
@@ -1666,12 +1620,12 @@ def semantic_interpret_get():
 
 
 def _run_interpret_all(query: str) -> tuple:
-    """Run semantic interpretation for a sentence with all supported models. Returns (response_dict, status_code)."""
+    """Run semantic interpretation for a sentence with all supported models (the 3 dropdown models). Returns (response_dict, status_code)."""
     if not MULTI_MODEL_AVAILABLE:
-        return {"success": False, "error": "Multi-model semantic analysis not available", "query": query, "models": {}}, 503
+        return {"success": False, "error": "modelmgmt-agent not available", "query": query, "models": {}}, 503
     if not query or not query.strip():
         return {"success": True, "query": query or "", "models": {}}, 200
-    model_ids = [m["id"] for m in MODEL_METADATA]
+    model_ids = DROPDOWN_MODEL_IDS
     models_out = {}
     for model_id in model_ids:
         data, _ = _run_semantic_interpret(query, model_id)
@@ -1709,7 +1663,7 @@ def preview_semantic_analysis():
     if not MULTI_MODEL_AVAILABLE:
         return jsonify({
             "success": False,
-            "error": "Multi-model semantic analysis not available"
+            "error": "modelmgmt-agent not available"
         }), 503
 
     data = request.get_json()
@@ -1732,7 +1686,7 @@ def preview_semantic_analysis_multi():
     if not MULTI_MODEL_AVAILABLE:
         return jsonify({
             "success": False,
-            "error": "Multi-model semantic analysis not available"
+            "error": "modelmgmt-agent not available"
         }), 503
 
     data = request.get_json()
@@ -1748,16 +1702,34 @@ def preview_semantic_analysis_multi():
         })
 
     try:
+        logger.info(
+            "modelmgmt-agent: running semantic analysis (POST /api/semantic/preview-multi). models=%s",
+            DROPDOWN_MODEL_IDS,
+        )
         analyzer = get_analyzer()
         if not analyzer:
             return jsonify({
                 "success": False,
-                "error": "Analyzer not available"
+                "error": "modelmgmt-agent not available. Install sentence-transformers and ensure at least one embedding model can load (e.g. mukaj/fin-mpnet-base)."
             }), 503
 
         t0 = time.perf_counter()
-        result = analyzer.analyze_query(query, parallel=True)
+        try:
+            result = analyzer.analyze_query(query, parallel=True)
+        except Exception as e:
+            err = str(e)
+            logger.warning("modelmgmt-agent: analyze_query failed", extra={"error": err, "query_preview": (query or "")[:100]})
+            return jsonify({
+                "success": False,
+                "error": err or "Semantic analysis failed.",
+                "query": query,
+                "models": {}
+            }), 503
         semantic_annotation_time_ms = round((time.perf_counter() - t0) * 1000)
+        logger.info(
+            "modelmgmt-agent: semantic analysis completed (preview-multi)",
+            extra={"models": len(result.get("models") or {}), "time_ms": semantic_annotation_time_ms},
+        )
 
         if "error" in result:
             return jsonify({
@@ -1767,17 +1739,27 @@ def preview_semantic_analysis_multi():
                 "models": {}
             }), 400
 
+        result_models = result.get("models") or {}
+        if not isinstance(result_models, dict):
+            result_models = {}
         models_out = {}
-        for model_name, model_result in result.get("models", {}).items():
-            tags = model_result.get("tags", [])
-            highlighted = model_result.get("highlighted_query", {}) or {}
-            segments = highlighted.get("highlighted_segments", [])
+        for model_name, model_result in result_models.items():
+            if not isinstance(model_result, dict):
+                model_result = {}
+            tags = model_result.get("tags") if isinstance(model_result.get("tags"), list) else []
+            highlighted = model_result.get("highlighted_query") or {}
+            if not isinstance(highlighted, dict):
+                highlighted = {}
+            segments = highlighted.get("highlighted_segments") if isinstance(highlighted.get("highlighted_segments"), list) else []
             models_out[model_name] = {
                 "tags": tags,
                 "highlighted_segments": segments,
                 "error": model_result.get("error"),
                 "semantic_annotation_time_ms": model_result.get("semantic_annotation_time_ms"),
             }
+        schema_assets = result.get("schema_assets") or []
+        if not isinstance(schema_assets, list):
+            schema_assets = []
 
         return jsonify({
             "success": True,
@@ -1785,11 +1767,11 @@ def preview_semantic_analysis_multi():
             "models": models_out,
             "best_model": result.get("best_model"),
             "semantic_annotation_time_ms": semantic_annotation_time_ms,
-            "schema_assets": result.get("schema_assets", []),
+            "schema_assets": schema_assets,
         })
     except Exception as e:
         error_msg = str(e)
-        logger.error("Error in multi-model semantic preview", extra={"error": error_msg, "query": query}, exc_info=True)
+        logger.error("modelmgmt-agent: multi-model semantic preview failed", extra={"error": error_msg, "query_preview": (query or "")[:100]}, exc_info=True)
         return jsonify({
             "success": False,
             "error": error_msg,
@@ -1809,33 +1791,79 @@ def suggestions_lucky():
         agent_system_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-agents'))
         if agent_system_path not in sys.path:
             sys.path.insert(0, agent_system_path)
-        from sg_agent.datahub_client import get_schema
+        # Ensure openint-datahub is on path so get_schema() can load schemas.py
+        datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
+        if os.path.isdir(datahub_path) and datahub_path not in sys.path:
+            sys.path.insert(0, datahub_path)
+        from sg_agent.datahub_client import get_schema_and_source
         from sg_agent.sentence_generator import generate_one_lucky
-        schema = get_schema()
+        logger.info("sg-agent: fetching schema for lucky suggestion (DataHub assets and schema)")
+        t0_sg = time.perf_counter()
+        schema, schema_source = get_schema_and_source()
         if not schema:
+            logger.warning("sg-agent: no schema available for lucky suggestion")
             return jsonify({
                 "success": False,
                 "error": "No schema available. Ensure DataHub is running or openint-datahub/schemas.py exists.",
             }), 503
-        result = generate_one_lucky(schema, prefer_llm=True)
-        source = result.get("source", "template")
+        if schema_source == "datahub":
+            logger.info("sg-agent: using DataHub assets and schema as context for LLM (Ollama)")
+        else:
+            logger.info("sg-agent: using openint-datahub schema as context for LLM (DataHub unavailable)")
+        logger.info("sg-agent: generating sentence (Ollama or template fallback)")
+        result = generate_one_lucky(schema, prefer_llm=True, schema_source=schema_source)
+        sg_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
+        sentence = (result.get("sentence") or "").strip()
+        err = result.get("error")
+        if err or not sentence:
+            logger.warning("sg-agent: lucky suggestion failed", extra={"error": err or "no sentence"})
+            hint = "Start Ollama (ollama serve) and pull a model, e.g. ollama pull llama3.2. Set OLLAMA_HOST if not localhost:11434."
+            return jsonify({
+                "success": False,
+                "error": err or "Sentence generation failed. " + hint,
+            }), 503
+        source = result.get("source") or "ollama"
         payload = {
             "success": True,
-            "sentence": result.get("sentence", ""),
+            "sentence": sentence,
             "category": result.get("category", "Analyst"),
             "source": source,
+            "sg_agent_time_ms": sg_agent_time_ms,
         }
-        if source == "openai":
-            payload["llm_model"] = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
+        if source == "ollama":
+            payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
+        logger.info("sg-agent: lucky suggestion ready", extra={"source": source, "category": result.get("category", "Analyst")})
+        # sg-agent + modelmgmt-agent: optionally annotate the sentence (for Compare "I'm feeling lucky")
+        if sentence and MULTI_MODEL_AVAILABLE and get_analyzer and request.args.get("annotate", "").lower() in ("1", "true", "yes"):
+            try:
+                logger.info("modelmgmt-agent: annotating lucky sentence (semantic analysis)")
+                analysis = analyze_query_multi_model(sentence, parallel=True)
+                if "error" not in analysis:
+                    models_out = {}
+                    for model_name, model_result in analysis.get("models", {}).items():
+                        tags = model_result.get("tags", [])
+                        highlighted = (model_result.get("highlighted_query") or {}).get("highlighted_segments", [])
+                        models_out[model_name] = {"tags": tags, "highlighted_segments": highlighted, "semantic_annotation_time_ms": model_result.get("semantic_annotation_time_ms")}
+                    payload["annotation"] = {
+                        "success": True,
+                        "query": sentence,
+                        "models": models_out,
+                        "best_model": analysis.get("best_model"),
+                        "schema_assets": analysis.get("schema_assets", []),
+                    }
+                    logger.info("modelmgmt-agent: annotation completed for lucky sentence", extra={"models": len(models_out)})
+            except Exception as ann_e:
+                logger.warning("modelmgmt-agent: annotation for lucky sentence failed", extra={"error": str(ann_e)})
+                payload["annotation"] = {"success": False, "error": str(ann_e)}
         return jsonify(payload)
     except ImportError as e:
-        logger.warning("sg-agent not available for lucky suggestion", extra={"error": str(e)})
+        logger.warning("sg-agent: not available for lucky suggestion", extra={"error": str(e)})
         return jsonify({
             "success": False,
             "error": "Suggestions agent not available",
         }), 503
     except Exception as e:
-        logger.warning("Lucky suggestion failed", extra={"error": str(e)}, exc_info=True)
+        logger.warning("sg-agent: lucky suggestion failed", extra={"error": str(e)}, exc_info=True)
         return jsonify({
             "success": False,
             "error": str(e),
@@ -1848,10 +1876,10 @@ if __name__ == '__main__':
         "OpenInt Backend starting",
         extra={"url": f"http://localhost:{port}", "cors_origins": CORS_ORIGINS},
     )
-    # Connect to Redis on localhost so chat responses are cached before returning to UI
+    # Redis for chat cache only; model loading/Redis is done by modelmgmt-agent
     get_redis()
-    # Preload all dropdown models at bootstrap: load from Redis if present, else download once and store in Redis
-    preload_embedding_models()
+    # Prevent Werkzeug from dumping full request/response JSON to the console
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
     if orchestrator is not None:
         logger.info("Backend ready for chat requests (orchestrator initialized)")
     else:

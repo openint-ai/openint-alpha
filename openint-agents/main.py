@@ -41,6 +41,15 @@ def initialize_agents(orchestrator: AgentOrchestrator):
     except Exception as e:
         print(f"⚠️  Schema generator agent not loaded: {e}")
 
+    # Initialize Model Management Agent (modelmgmt-agent): Hugging Face + Redis, sentence annotation
+    try:
+        from modelmgmt_agent.modelmgmt_agent import ModelMgmtAgent
+        modelmgmt_agent = ModelMgmtAgent()
+        agents_list.append(modelmgmt_agent)
+        print(f"✅ Initialized {modelmgmt_agent.name}")
+    except Exception as e:
+        print(f"⚠️  Model management agent not loaded: {e}")
+
     return agents_list
 
 

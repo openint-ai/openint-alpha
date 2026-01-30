@@ -72,16 +72,46 @@ class JsonLogFormatter(logging.Formatter):
         if record.exc_info:
             log_dict["exception"] = self.formatException(record.exc_info)
         # Structured extra (e.g. logger.info("msg", extra={"query_id": "..."}))
+        # Sanitize: no full JSON blobs or long strings in logs
         if self.include_extra:
             skip = {"name", "msg", "args", "created", "filename", "funcName", "levelname", "levelno", "lineno", "module", "msecs", "pathname", "process", "processName", "relativeCreated", "stack_info", "exc_info", "exc_text", "thread", "threadName", "message", "taskName", "otelTraceID", "otelSpanID", "otelServiceName", "otelTraceSampled"}
             for k, v in record.__dict__.items():
                 if k not in skip and v is not None:
-                    try:
-                        json.dumps(v)
-                    except (TypeError, ValueError):
-                        v = str(v)
-                    log_dict[k] = v
-        return json.dumps(log_dict, default=str)
+                    log_dict[k] = _sanitize_log_value(v)
+        line = json.dumps(log_dict, default=str)
+        # Prevent dumping huge JSON: cap line length so logs stay readable
+        max_log_line = 2000
+        if len(line) > max_log_line:
+            line = line[: max_log_line - 20] + " ... (truncated)"
+        return line
+
+
+def _sanitize_log_value(v: Any, max_str_len: int = 200) -> Any:
+    """Avoid logging full JSON blobs or long strings; return short summaries for large values."""
+    if v is None:
+        return None
+    if isinstance(v, bool) or isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        return v[:max_str_len] + ("..." if len(v) > max_str_len else "")
+    if isinstance(v, (list, tuple)):
+        n = len(v)
+        if n <= 5 and all(isinstance(x, (str, int, float, bool)) or x is None for x in v):
+            return list(v)
+        return {"_type": "list", "len": n}
+    if isinstance(v, dict):
+        n = len(v)
+        if n > 8:
+            return {"_type": "dict", "keys": list(v.keys())[:10], "len": n}
+        out = {}
+        for k, val in v.items():
+            out[k] = _sanitize_log_value(val, max_str_len)
+        return out
+    try:
+        s = str(v)
+        return s[:max_str_len] + ("..." if len(s) > max_str_len else "")
+    except Exception:
+        return "<unrepresentable>"
 
 
 def _install_logging_instrumentation() -> None:

@@ -439,22 +439,23 @@ function ModelColumn({
                   const type = seg.tag_type ?? seg.tag?.type ?? 'text';
                   const label = seg.label ?? seg.tag?.label ?? type;
                   const isHighlight = seg.type === 'highlight' && seg.tag;
-                  const rangeKey = `${seg.text}-${type}:${label}`;
+                  const rangeKey = `${seg.text}-${String(type).toLowerCase()}:${String(label).toLowerCase()}`;
                   const consensus = consensusMap.get(rangeKey);
-                  const baseClass = isHighlight
-                    ? `inline rounded px-0.5 py-0 mx-0.5 border text-[11px] font-medium ${getSemanticColor(type)}`
-                    : 'text-gray-800';
-                  const consensusClass =
+                  // In compare view, color by agreement only (legend: green = all agree, amber = disagree)
+                  const agreementFill =
                     consensus === 'consistent'
-                      ? 'ring-1 ring-emerald-400 ring-offset-0.5'
+                      ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
                       : consensus === 'different'
-                        ? 'ring-1 ring-amber-400 ring-offset-0.5'
-                        : '';
+                        ? 'bg-amber-100 text-amber-900 border-amber-300'
+                        : 'bg-gray-100 text-gray-800 border-gray-300';
+                  const baseClass = isHighlight
+                    ? `inline rounded px-0.5 py-0 mx-0.5 border text-[11px] font-medium ${agreementFill}`
+                    : 'text-gray-800';
                   return isHighlight ? (
                     <span
                       key={key}
-                      className={`${baseClass} ${consensusClass}`}
-                      title={`${seg.label ?? seg.tag?.label}: ${seg.tag?.value ?? seg.text}${consensus ? ` (${consensus})` : ''}`}
+                      className={baseClass}
+                      title={`${seg.label ?? seg.tag?.label}: ${seg.tag?.value ?? seg.text} (tag: ${type})${consensus ? ` · ${consensus}` : ' · one model'}`}
                     >
                       {seg.text}
                     </span>
@@ -571,7 +572,7 @@ export default function SemanticCompare() {
     modelStats: Record<string, ModelPerformance>;
   }>(() => ({ queryCount: 0, modelStats: {} }));
   /** After "I'm feeling lucky!", which LLM (or template) generated the sentence */
-  const [luckySource, setLuckySource] = useState<{ source: string; llm_model?: string } | null>(null);
+  const [luckySource, setLuckySource] = useState<{ source: string; llm_model?: string; sg_agent_time_ms?: number } | null>(null);
 
   const suggestionsByCategory = useMemo(
     () => groupByCategory(EXAMPLE_POOL, exampleSeed),
@@ -630,6 +631,7 @@ export default function SemanticCompare() {
   const handleLucky = useCallback(async () => {
     setLuckyLoading(true);
     setError(null);
+    setLuckySource(null);
     try {
       const data = await getLuckySuggestion();
       const sentence = data.sentence?.trim();
@@ -637,6 +639,11 @@ export default function SemanticCompare() {
         setLuckyLoading(false);
         return;
       }
+      setLuckySource({
+        source: data.source ?? 'template',
+        llm_model: data.llm_model,
+        sg_agent_time_ms: data.sg_agent_time_ms,
+      });
       setInput(sentence);
       setQuery(sentence);
       setUsedInSession((prev) => new Set(prev).add(sentence));
@@ -679,11 +686,11 @@ export default function SemanticCompare() {
   for (const r of ranges) {
     const types = Object.values(r.types).filter(Boolean);
     if (types.length === 0) continue;
-    const unique = new Set(types);
+    const unique = new Set(types.map((t) => t.toLowerCase()));
     const text = query.slice(r.start, r.end);
     const consistent = types.length >= 2 && unique.size === 1;
     for (const t of types) {
-      const key = `${text}-${t}`;
+      const key = `${text}-${t.toLowerCase()}`;
       consensusMap.set(key, consistent ? 'consistent' : 'different');
     }
   }
@@ -704,7 +711,10 @@ export default function SemanticCompare() {
             <textarea
               id="compare-input"
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                setInput(e.target.value);
+                setLuckySource(null);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
@@ -735,6 +745,22 @@ export default function SemanticCompare() {
                 {luckyLoading ? '…' : "I'm feeling lucky!"}
               </button>
             </div>
+            {luckySource?.llm_model && (
+              <p className="text-xs text-gray-500 flex items-center gap-1.5 mt-1" role="status">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-gray-100 text-gray-400" aria-hidden>◇</span>
+                Generated with <span className="font-medium text-gray-600">{luckySource.llm_model}</span>
+                {luckySource.sg_agent_time_ms != null && (
+                  <span
+                    className="text-gray-400 font-mono tabular-nums text-[11px]"
+                    title={`sg-agent: ${luckySource.sg_agent_time_ms} ms`}
+                  >
+                    · {luckySource.sg_agent_time_ms >= 1000
+                      ? `${(luckySource.sg_agent_time_ms / 1000).toFixed(1)}s`
+                      : `${luckySource.sg_agent_time_ms}ms`}
+                  </span>
+                )}
+              </p>
+            )}
           </div>
           {error && (
             <p className="mt-2 text-sm text-rose-600" role="alert">
@@ -743,15 +769,19 @@ export default function SemanticCompare() {
           )}
         </div>
 
-        {/* Legend */}
+        {/* Legend: highlight background = agreement across 3 models */}
         <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600">
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-4 h-4 rounded border-2 border-emerald-400 bg-emerald-50" aria-hidden />
-            Consistency — all 3 models agree
+            <span className="w-4 h-4 rounded border border-emerald-300 bg-emerald-100" aria-hidden />
+            Green — all 3 models agree on this span
           </span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="w-4 h-4 rounded border-2 border-amber-400 bg-amber-50" aria-hidden />
-            Difference — models disagree
+            <span className="w-4 h-4 rounded border border-amber-300 bg-amber-100" aria-hidden />
+            Amber — models disagree on this span
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="w-4 h-4 rounded border border-gray-300 bg-gray-100" aria-hidden />
+            Gray — only one model annotated this span
           </span>
         </div>
 

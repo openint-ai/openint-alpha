@@ -2,6 +2,10 @@
 
 This feature allows you to process queries through multiple embedding models simultaneously to understand and tag semantics from different perspectives.
 
+## Implementation
+
+The backend uses **modelmgmt-agent** (openint-agents) for multi-model semantic analysis when `openint-agents` is on the path. modelmgmt-agent provides the analyzer and model registry (Hugging Face + Redis). If modelmgmt-agent is unavailable, the backend falls back to local `multi_model_semantic` and `model_registry` in openint-backend. See [openint-agents/modelmgmt_agent/README.md](../openint-agents/modelmgmt_agent/README.md).
+
 ## Overview
 
 The multi-model semantic analyzer processes queries through multiple embedding models (e.g., BGE, E5, MPNet) and extracts semantic tags, entities, intents, and other semantic information. This provides:
@@ -168,10 +172,14 @@ The system extracts various semantic tags:
 
 ## Python Usage
 
-You can also use the analyzer directly in Python:
+When the backend runs with openint-agents, the analyzer is provided by **modelmgmt-agent** (`modelmgmt_agent.semantic_analyzer`). When using the backend alone (fallback), you can call the local module:
 
 ```python
-from multi_model_semantic import analyze_query_multi_model
+# With openint-agents on path (modelmgmt-agent):
+from modelmgmt_agent.semantic_analyzer import analyze_query_multi_model
+
+# Or backend fallback (openint-backend only):
+# from multi_model_semantic import analyze_query_multi_model
 
 # Analyze a query
 result = analyze_query_multi_model(

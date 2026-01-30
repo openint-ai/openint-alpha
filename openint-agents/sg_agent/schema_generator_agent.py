@@ -87,7 +87,7 @@ class SchemaGeneratorAgent(BaseAgent):
                 )
             count = int(context.get("count", 25))
             prefer_llm = context.get("prefer_llm", True)
-            sentences = generate_sentences(schema, count=count, prefer_llm=prefer_llm)
+            sentences, _error = generate_sentences(schema, count=count, prefer_llm=prefer_llm)
             # Optional filter by query hint
             query_lower = (query or "").strip().lower()
             if query_lower:

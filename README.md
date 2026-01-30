@@ -77,6 +77,7 @@ Multi-agent AI system with:
 - Message bus for inter-agent communication
 - Agent registry for service discovery
 - Orchestrator for coordinating workflows
+- **modelmgmt-agent**: Model registry (Hugging Face + Redis) and sentence semantic annotation; used by the backend for `/api/semantic/*` when agents are loaded
 
 ### openint-backend
 Flask API backend providing:

@@ -84,8 +84,8 @@ class AgentOrchestrator:
         self._active_queries[query_id] = context
         self._query_responses[query_id] = []
         
-        # Determine which agents to involve
-        agents_to_query = self._select_agents(user_query)
+        # Determine which agents to involve (metadata can request semantic_annotate → modelmgmt-agent only)
+        agents_to_query = self._select_agents(user_query, context.metadata)
         
         # Send query to all selected agents in parallel (avoids 2x latency when search + graph)
         logger.debug("Sending query to %s agent(s): %s", len(agents_to_query), [a.name for a in agents_to_query])
@@ -115,19 +115,28 @@ class AgentOrchestrator:
             "message": "Query submitted to agents"
         }
     
-    def _select_agents(self, query: str) -> List:
+    def _select_agents(self, query: str, metadata: Optional[Dict[str, Any]] = None) -> List:
         """
         Select appropriate agents for a query.
         
         Args:
             query: User query
+            metadata: Optional metadata (e.g. intent=semantic_annotate for modelmgmt-agent only)
             
         Returns:
             List of agent info objects
         """
+        metadata = metadata or {}
         query_lower = query.lower()
         selected_agents = []
-        
+
+        # Backend semantic API: route to modelmgmt-agent only for sentence annotation
+        if metadata.get("intent") == "semantic_annotate":
+            agents = self.registry.find_agents_by_capability("semantic_annotate")
+            selected_agents.extend(agents)
+            if selected_agents:
+                return selected_agents
+
         # Keyword-based agent selection
         if any(word in query_lower for word in ["search", "find", "look", "show"]):
             agents = self.registry.find_agents_by_capability("search")

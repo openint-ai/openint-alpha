@@ -3,11 +3,14 @@ Milvus Client Configuration
 Connects to Milvus running on local Docker container
 """
 
+import logging
 import os
 import re
 import sys
 import time
 from dotenv import load_dotenv
+
+logger = logging.getLogger("openint_vectordb.milvus")
 from pymilvus import (
     connections,
     Collection,
@@ -31,7 +34,7 @@ try:
 except ImportError:
     EMBEDDING_AVAILABLE = False
     SentenceTransformer = None
-    print("⚠️  sentence-transformers not available. Install with: pip install sentence-transformers")
+    logger.warning("sentence-transformers not available. Install with: pip install sentence-transformers")
 
 # Redis-backed model registry for O(1) boot when scaling (optional)
 _load_model_from_registry = None
@@ -104,32 +107,30 @@ class MilvusClient:
         
         if EMBEDDING_AVAILABLE and SentenceTransformer is not None:
             try:
-                print(f"📦 Loading embedding model: {embedding_model}")
+                os.environ["TQDM_DISABLE"] = "1"
+                logger.info("Loading embedding model: %s", embedding_model)
                 if _load_model_from_registry is not None:
-                    print(f"   💡 Using Redis model registry (O(1) boot when scaling)")
+                    logger.info("Using Redis model registry (O(1) boot when scaling)")
                     self.embedding_model = _load_model_from_registry(embedding_model)
                 else:
-                    print(f"   💡 Finance-specific model optimized for banking/finance queries")
+                    logger.info("Finance-specific model optimized for banking/finance queries")
                     self.embedding_model = SentenceTransformer(embedding_model)
                 if self.embedding_model is not None:
                     self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
-                    print(f"✅ Embedding model loaded (dimension: {self.embedding_dim})")
-                    print(f"   Model: {embedding_model}")
+                    logger.info("Embedding model loaded (dimension: %s). Model: %s", self.embedding_dim, embedding_model)
                 else:
                     raise RuntimeError("Registry returned None")
             except Exception as e:
-                print(f"⚠️  Failed to load embedding model: {e}")
-                print("   Install with: pip install sentence-transformers")
-                print(f"   Trying fallback model: all-MiniLM-L6-v2")
+                logger.warning("Failed to load embedding model: %s. Install sentence-transformers. Trying fallback.", e)
                 try:
                     self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
                     self.embedding_dim = 384
                     self.embedding_model_name = "all-MiniLM-L6-v2"
-                    print(f"✅ Fallback model loaded (dimension: {self.embedding_dim})")
+                    logger.info("Fallback model loaded (dimension: %s)", self.embedding_dim)
                 except Exception as e2:
-                    print(f"❌ Fallback model also failed: {e2}")
+                    logger.warning("Fallback model also failed: %s", e2)
         else:
-            print("⚠️  Embedding model not available. Install sentence-transformers for automatic embeddings.")
+            logger.warning("Embedding model not available. Install sentence-transformers for automatic embeddings.")
         
         # Initialize Milvus connection
         try:
@@ -138,21 +139,14 @@ class MilvusClient:
                 host=self.host,
                 port=self.port
             )
-            print(f"✅ Milvus client initialized")
-            print(f"   Host: {self.host}:{self.port}")
-            print(f"   Collection: {self.collection_name}")
-            
+            logger.info("Milvus client initialized. Host: %s:%s Collection: %s", self.host, self.port, self.collection_name)
+
         except Exception as e:
             error_msg = (
-                f"❌ Failed to connect to Milvus at {self.host}:{self.port}\n"
-                f"   Error: {str(e)}\n"
-                f"   Please ensure:\n"
-                f"   1. Milvus Docker container is running\n"
-                f"   2. Container is accessible on port {self.port}\n"
-                f"   3. Check your .env file for correct MILVUS_HOST and MILVUS_PORT\n"
-                f"   To start Milvus: docker run -d -p {self.port}:19530 milvusdb/milvus:v2.6.9"
-            )
-            print(error_msg)
+                "Failed to connect to Milvus at %s:%s. Error: %s. "
+                "Ensure Milvus Docker container is running and .env has MILVUS_HOST/MILVUS_PORT."
+            ) % (self.host, self.port, str(e))
+            logger.warning("%s", error_msg)
             raise ConnectionError(error_msg) from e
     
     def _generate_embeddings(self, texts: List[str]) -> List[List[float]]:

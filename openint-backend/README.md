@@ -45,15 +45,9 @@ Check readiness with: `curl -s http://localhost:3001/api/ready`. If you get 503,
 - `GET /api/semantic/models` - List available model IDs and dimensions.
 - `GET /api/semantic/models-with-meta` - List supported models with metadata (id, display_name, author, description, details, url).
 
-## Redis-backed Model Registry (fast scaling)
+## Model loading and Redis
 
-The backend treats Redis as the **authoritative artifact store for ML models** so new replicas can hydrate from the internal cache in **O(1)** time instead of waiting on HuggingFace downloads.
-
-- **Boot**: When loading an embedding model (e.g. `mukaj/fin-mpnet-base`), the backend first checks Redis. If the model blob is present, it is unpacked and loaded locally (fast). If not, one replica acquires a Redis lock, downloads from HuggingFace, saves a zip to Redis, and releases the lock.
-- **Thundering-herd protection**: Only the pod that holds the lock downloads and writes to Redis; other pods wait (poll) for the blob to appear, then load from Redis. This avoids multiple pods saturating the network by writing simultaneously.
-- **Configuration**: Same Redis as chat cache (`REDIS_HOST`, `REDIS_PORT`). Model blobs use a separate Redis client with `decode_responses=False`. Keys: `model_registry:{model}:blob`, `model_registry:{model}:lock`, `model_registry:{model}:ready`.
-
-Used automatically by multi-model semantic analysis and by the Milvus client when the registry is on the path.
+**modelmgmt-agent** (openint-agents) owns model downloads, Redis-backed model storage, and sentence annotation for the 3 dropdown models. The backend does **not** load models or manage the model registry; it only calls modelmgmt-agent’s analyzer for semantic endpoints. Models are loaded by the agent on first semantic request. See [openint-agents/modelmgmt_agent/README.md](../openint-agents/modelmgmt_agent/README.md).
 
 ## Configuration
 
@@ -66,12 +60,10 @@ Set environment variables in `.env`:
 
 **Hugging Face:** Set `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`) for higher rate limits and faster model downloads; it also suppresses the "unauthenticated requests" warning. Create a token at https://huggingface.co/settings/tokens and add `HF_TOKEN=your_token` to `.env` or your environment.
 
-**Redis (model cache + chat cache):** The dropdown embedding/semantic models are downloaded once from Hugging Face and stored in Redis so subsequent loads are fast. Same Redis is used for chat response cache. Default: `REDIS_HOST=127.0.0.1`, `REDIS_PORT=6379`.
+**Redis:** Used by the backend for **chat response cache** only. Model loading and model Redis are handled by modelmgmt-agent. Default: `REDIS_HOST=127.0.0.1`, `REDIS_PORT=6379`.
 
 - **Start Redis:** From repo root: `docker compose -f docker-compose.redis.yml up -d`
-- **Check connectivity:** `cd openint-backend && python scripts/check_redis_registry.py` — pings Redis and lists cached model keys
-- **Pre-warm a model:** `python scripts/check_redis_registry.py --warm mukaj/fin-mpnet-base` (or `--warm-all` for all dropdown models)
-- **Health:** `GET /api/health` returns `redis_cache.connected` and `redis_model_registry.connected`; if Redis is down, model registry fails fast and falls back to HuggingFace.
+- **Health:** `GET /api/health` returns `redis_cache.connected` (chat cache) and `modelmgmt_agent_available` (semantic endpoints).
 
 ## Observability (OpenTelemetry + structured logging)
 

@@ -1,88 +1,140 @@
 """
 Sentence generator for sg-agent.
-Uses the best available generative model (OpenAI if configured) or template-based
-generation from schema to produce example questions that analysts, customer care,
-and business users would ask in a banking context.
+Uses Ollama (open-source LLM) to generate banking, data, analytics, and regulatory
+example questions. Context comes from the DataHub catalog schema (datasets and fields).
+No template fallback.
 """
 
 import os
 import json
 import logging
+import urllib.request
+import urllib.error
 from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+def _get_ollama_config() -> tuple[str, str]:
+    """OLLAMA_HOST and OLLAMA_MODEL at call time."""
+    host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    return (host, model)
 
 
-def _build_schema_summary(schema: Dict[str, Dict[str, Any]]) -> str:
-    """Build a short text summary of datasets and fields for the LLM."""
+def _build_schema_summary(schema: Dict[str, Dict[str, Any]], max_datasets: Optional[int] = None, max_fields: int = 15) -> str:
+    """Build a short text summary of datasets and fields from the DataHub catalog for the LLM.
+    Use max_datasets to limit size for faster Ollama response (e.g. 6 for lucky)."""
     parts = []
-    for name, meta in schema.items():
-        desc = meta.get("description", "")
+    items = list(schema.items())
+    if max_datasets is not None and max_datasets > 0:
+        items = items[:max_datasets]
+    for name, meta in items:
+        desc = (meta.get("description", "") or "")[:80]
         category = meta.get("category", "dataset")
-        fields = meta.get("fields", [])
-        field_names = [f.get("name", "") for f in fields[:15]]
+        fields = meta.get("fields", [])[:max_fields]
+        field_names = [f.get("name", "") for f in fields]
         parts.append(f"- {name} ({category}): {desc}. Fields: {', '.join(field_names)}")
     return "\n".join(parts)
 
 
-def _generate_with_openai(schema_summary: str, count: int = 20) -> Optional[List[Dict[str, Any]]]:
-    """Generate example sentences using OpenAI (best available model). Returns None if unavailable."""
-    if not OPENAI_API_KEY:
-        return None
-    try:
-        import openai
-        client = openai.OpenAI(api_key=OPENAI_API_KEY)
-        # Use best available model (GPT-4o preferred, fallback to gpt-3.5-turbo)
-        model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4o-mini")
-        prompt = f"""You are helping a banking data platform. Given the following dataset schema (tables and fields), generate exactly {count} natural-language questions that real users would ask. Return a JSON array of objects, each with "sentence" (the question) and "category" (one of: "Analyst", "Customer Care", "Business Analyst", "Regulatory").
+def _build_prompt(schema_summary: str, count: int, short_for_lucky: bool = False, schema_source: str = "datahub") -> str:
+    """Prompt for sentence generation. Context to the LLM is always from DataHub assets and schema
+    (or openint-datahub fallback). schema_source is 'datahub' or 'openint-datahub'."""
+    context_label = "DataHub assets and schema (from DataHub catalog)" if schema_source == "datahub" else "schema (from openint-datahub; DataHub unavailable)"
+    if short_for_lucky:
+        return f"""You are helping a banking data platform. Context to the LLM: {context_label}. Given the schema below, generate exactly {count} natural-language questions (1-3 sentences each). Banking/data/analytics/regulatory only. Return a JSON array of objects with "sentence" and "category" (one of: Analyst, Customer Care, Business Analyst, Regulatory). Use only table/field names from the schema. Return ONLY the JSON array.
+
+Schema:
+{schema_summary}"""
+    return f"""You are helping a banking data platform. Context to the LLM: {context_label}. Given the following dataset schema (tables and fields), generate exactly {count} natural-language questions that real users would ask. Focus strictly on banking, data, analytics, and regulatory use cases. Return a JSON array of objects, each with "sentence" (the question) and "category" (one of: "Analyst", "Customer Care", "Business Analyst", "Regulatory").
 
 Schema:
 {schema_summary}
 
 Rules:
-- Analyst: data exploration, counts, top N, filters, multi-dimensional breakdowns.
+- Analyst: data exploration, counts, top N, filters, multi-dimensional breakdowns, dashboards.
 - Customer Care: lookup by customer, account, transaction, with full context and related records.
 - Business Analyst: KPIs, trends, segments, comparisons, year-over-year, regional breakdowns.
-- Regulatory: compliance, reporting, audit, SAR, multi-condition filters, audit trails.
-- Use only table/field names from the schema.
+- Regulatory: compliance, reporting, audit, SAR, CTR, multi-condition filters, audit trails.
+- Use only table/field names from the schema. All questions must be banking/data/analytics/regulatory in nature.
 - CRITICAL — Length and complexity: Each question MUST be at least 5x longer than a one-line question (aim for 50–120+ words). Make every query complex: use multiple clauses, conditions, and groupings. Include at least 3–5 of: time ranges, breakdowns (by region/type/state), comparisons (vs last period), explicit fields to return, filters (amounts, statuses), and purpose (e.g. "for executive summary", "for compliance review"). No short one-liners.
 - Return ONLY the JSON array, no other text."""
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=8000,
-        )
-        text = (response.choices[0].message.content or "").strip()
-        # Strip markdown code block if present
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines)
+
+def _parse_llm_json_response(text: str) -> Optional[List[Dict[str, Any]]]:
+    """Extract JSON array from LLM response; strip markdown code blocks if present."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        lines = text.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    try:
         data = json.loads(text)
-        if isinstance(data, list):
+        return data if isinstance(data, list) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _generate_with_ollama(schema_summary: str, count: int = 20, short_for_lucky: bool = False, schema_source: str = "datahub") -> tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+    """Generate example sentences using Ollama (open-source LLM). Context to the LLM is provided via DataHub assets and schema (or openint-datahub). Returns (sentences, None) or (None, error_message).
+    When short_for_lucky=True, use a shorter prompt and lower num_predict for faster response."""
+    host, model = _get_ollama_config()
+    # Lower num_predict for fewer sentences to speed up response (≈200–400 tokens per sentence; less for short)
+    num_predict = min(8000, max(512, 200 * count)) if short_for_lucky else min(8000, max(512, 350 * count))
+    try:
+        import ssl
+        prompt = _build_prompt(schema_summary, count, short_for_lucky=short_for_lucky, schema_source=schema_source)
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.7, "num_predict": num_predict},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        # Allow self-signed / localhost
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=120, context=ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        message = data.get("message") or {}
+        text = (message.get("content") or "").strip()
+        parsed = _parse_llm_json_response(text)
+        if isinstance(parsed, list):
             out = []
-            for item in data:
+            for item in parsed:
                 if isinstance(item, dict) and item.get("sentence"):
                     out.append({
                         "sentence": item["sentence"],
                         "category": item.get("category", "Analyst"),
-                        "source": "openai",
+                        "source": "ollama",
                     })
-            return out[:count] if out else None
+            return (out[:count] if out else [], None)
+        return (None, "Ollama returned invalid JSON. Try a different model or check the response.")
+    except urllib.error.URLError as e:
+        logger.warning("Ollama sentence generation failed: %s", e)
+        msg = str(e.reason) if getattr(e, "reason", None) else str(e)
+        if "Connection refused" in msg or "111" in msg:
+            msg = "Ollama is not running. Start Ollama (e.g. ollama serve) and pull a model: ollama pull " + model
+        return (None, msg)
     except Exception as e:
-        logger.warning("OpenAI sentence generation failed: %s", e)
-    return None
+        logger.warning("Ollama sentence generation failed: %s", e)
+        return (None, str(e))
 
 
 def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Template-based example sentences from schema (no LLM)."""
+    """Template-based example sentences from schema (no LLM). UNUSED: sg-agent is strictly LLM-only."""
     sentences: List[Dict[str, Any]] = []
     dataset_names = list(schema.keys())
     field_lists = {name: [f.get("name", "") for f in meta.get("fields", [])] for name, meta in schema.items()}
@@ -158,31 +210,57 @@ def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any
 def generate_one_lucky(
     schema: Dict[str, Dict[str, Any]],
     prefer_llm: bool = True,
+    schema_source: str = "datahub",
 ) -> Dict[str, Any]:
     """
-    Generate one random sentence suitable for "I'm feeling lucky!" — bank business analytics,
-    customer support query, or regulatory. Returns {"sentence": str, "category": str}.
+    Generate one random sentence for "I'm feeling lucky!" — banking, data,
+    analytics, or regulatory. Context to the LLM is provided via DataHub assets and schema (schema_source).
+    Prefers Ollama; falls back to template sentences when Ollama is unavailable or returns invalid JSON.
+    Returns {"sentence", "category", "source": "ollama"|"template"}.
     """
     import random
-    sentences = generate_sentences(schema, count=40, prefer_llm=prefer_llm)
-    if not sentences:
-        return {"sentence": "Top 10 customers by transaction count", "category": "Analyst"}
-    # Pick one at random (optionally weight by category so we get variety)
-    return random.choice(sentences)
+    # Request only 5 sentences for "I'm feeling lucky" to keep Ollama response fast; we pick one.
+    sentences, error_msg = generate_sentences(schema, count=5, prefer_llm=prefer_llm, fast_lucky=True, schema_source=schema_source)
+    if sentences:
+        return random.choice(sentences)
+    # Fallback: use template sentences so the button always works when schema is available
+    templates = _generate_templates(schema)
+    if templates:
+        one = random.choice(templates)
+        return {
+            "sentence": one["sentence"],
+            "category": one.get("category", "Analyst"),
+            "source": "template",
+            "fallback": True,
+            "ollama_error": error_msg,
+        }
+    return {
+        "sentence": "",
+        "category": "",
+        "source": "ollama",
+        "error": error_msg or "Ollama is not available. Start Ollama and pull a model (e.g. ollama pull llama3.2).",
+    }
 
 
 def generate_sentences(
     schema: Dict[str, Dict[str, Any]],
     count: int = 25,
     prefer_llm: bool = True,
-) -> List[Dict[str, Any]]:
+    fast_lucky: bool = False,
+    schema_source: str = "datahub",
+) -> tuple[List[Dict[str, Any]], Optional[str]]:
     """
-    Generate example sentences using the best available method.
-    Tries OpenAI if OPENAI_API_KEY is set and prefer_llm is True; else uses templates.
+    Generate example sentences via Ollama (open-source LLM). Context to the LLM is provided via
+    DataHub assets and schema (schema_source='datahub') or openint-datahub (schema_source='openint-datahub').
+    Returns (sentences, error). If error is set, sentences will be empty.
+    When fast_lucky=True, use a shorter schema summary for faster Ollama response (e.g. for "I'm feeling lucky").
     """
-    if prefer_llm and OPENAI_API_KEY:
+    if not prefer_llm:
+        logger.warning("Sentence generation is LLM-only; prefer_llm=False ignored.")
+    if fast_lucky:
+        summary = _build_schema_summary(schema, max_datasets=6, max_fields=8)
+        sentences_list, error_msg = _generate_with_ollama(summary, count=count, short_for_lucky=True, schema_source=schema_source)
+    else:
         summary = _build_schema_summary(schema)
-        llm_result = _generate_with_openai(summary, count=count)
-        if llm_result:
-            return llm_result
-    return _generate_templates(schema)
+        sentences_list, error_msg = _generate_with_ollama(summary, count=count, schema_source=schema_source)
+    return (sentences_list or [], error_msg)
