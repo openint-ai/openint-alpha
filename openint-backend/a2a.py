@@ -136,6 +136,17 @@ def handle_sg_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
                 message_parts=[{"kind": "text", "text": "No schema available. Ensure DataHub or openint-datahub is configured."}],
             )
         sentences_list, error_msg = generate_sentences(schema, count=count, prefer_llm=True, fast_lucky=True, schema_source=schema_source)
+        # Fallback to template sentences when Ollama fails (same as Compare "I'm feeling lucky")
+        if not sentences_list and schema:
+            try:
+                from sg_agent.sentence_generator import _generate_templates
+                templates = _generate_templates(schema)
+                if templates:
+                    sentences_list = templates[:count]
+                    error_msg = None
+                    logger.info("sg-agent A2A: using template fallback (%s sentences)", len(sentences_list))
+            except Exception as tb:
+                logger.debug("sg-agent A2A template fallback failed: %s", tb)
         if error_msg and not sentences_list:
             return _make_task(
                 task_id, context_id, "failed",

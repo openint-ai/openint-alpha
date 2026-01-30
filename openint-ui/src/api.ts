@@ -394,6 +394,10 @@ export interface A2ARunResponse {
   steps: A2AStep[];
   sentences: A2ASentence[];
   annotations: A2AAnnotationItem[];
+  /** Time in ms for sg-agent to generate sentences */
+  sg_agent_time_ms?: number | null;
+  /** Time in ms for modelmgmt-agent to annotate all sentences */
+  modelmgmt_agent_time_ms?: number | null;
   error?: string;
 }
 

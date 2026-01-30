@@ -1844,11 +1844,26 @@ def a2a_run():
         from a2a import handle_sg_agent_message_send, handle_modelmgmt_agent_message_send
         # Step 1: sg-agent — generate sentences via A2A message/send
         steps.append({"agent": "sg-agent", "action": "generate", "status": "running"})
+        t0_sg = time.perf_counter()
         msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": f"Generate {sentence_count} sentences"}], "messageId": "a2a-run-1", "kind": "message"}}
         task_sg = handle_sg_agent_message_send(msg)
+        sg_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
         if task_sg.get("status", {}).get("state") == "failed":
             steps[-1]["status"] = "failed"
-            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "error": "sg-agent failed to generate sentences"}), 503
+            err_detail = "sg-agent failed to generate sentences"
+            msg = task_sg.get("status", {}).get("message") or {}
+            for part in msg.get("parts") or []:
+                if part.get("kind") == "text" and part.get("text"):
+                    err_detail = part["text"].strip()
+                    break
+            return jsonify({
+                "success": False,
+                "steps": steps,
+                "sentences": [],
+                "annotations": [],
+                "sg_agent_time_ms": sg_agent_time_ms,
+                "error": err_detail,
+            }), 503
         steps[-1]["status"] = "completed"
         # Extract sentences from task artifacts
         for art in task_sg.get("artifacts") or []:
@@ -1856,9 +1871,10 @@ def a2a_run():
                 if p.get("kind") == "text" and p.get("text"):
                     sentences.append({"text": p["text"], "category": p.get("metadata", {}).get("category", "Analyst")})
         if not sentences:
-            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "error": "No sentences from sg-agent"}), 503
+            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "sg_agent_time_ms": sg_agent_time_ms, "error": "No sentences from sg-agent"}), 503
         # Step 2: modelmgmt-agent — annotate each sentence via A2A message/send
         steps.append({"agent": "modelmgmt-agent", "action": "annotate", "status": "running", "count": len(sentences)})
+        t0_mm = time.perf_counter()
         for i, sent in enumerate(sentences):
             msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": sent["text"]}], "messageId": f"a2a-annot-{i}", "kind": "message"}}
             task_mm = handle_modelmgmt_agent_message_send(msg)
@@ -1870,13 +1886,29 @@ def a2a_run():
                             ann = p.get("data")
                             break
             annotations.append({"sentence": sent["text"], "annotation": ann, "success": ann is not None})
+        modelmgmt_agent_time_ms = round((time.perf_counter() - t0_mm) * 1000)
         steps[-1]["status"] = "completed"
-        return jsonify({"success": True, "steps": steps, "sentences": sentences, "annotations": annotations})
+        return jsonify({
+            "success": True,
+            "steps": steps,
+            "sentences": sentences,
+            "annotations": annotations,
+            "sg_agent_time_ms": sg_agent_time_ms,
+            "modelmgmt_agent_time_ms": modelmgmt_agent_time_ms,
+        })
     except Exception as e:
         logger.exception("A2A run failed")
         if steps:
             steps[-1]["status"] = "failed"
-        return jsonify({"success": False, "steps": steps, "sentences": sentences, "annotations": annotations, "error": str(e)}), 500
+        return jsonify({
+            "success": False,
+            "steps": steps,
+            "sentences": sentences,
+            "annotations": annotations,
+            "sg_agent_time_ms": None,
+            "modelmgmt_agent_time_ms": None,
+            "error": str(e),
+        }), 500
 
 
 @app.route('/api/suggestions/lucky', methods=['GET'])
