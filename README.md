@@ -1,5 +1,31 @@
 # OpenInt Alpha
 
+## 🎬 Product Experience
+
+How the product looks, feels, and works:
+
+| Feature | Description |
+|--------|---------------|
+| **Chat** | Ask questions in natural language; get answers with semantic search and source citations. |
+| **Compare** | Enter a sentence and see how 3 embedding models annotate it (green = agreement, amber = disagreement). |
+| **A2A** | Agent-to-Agent: sg-agent generates sentences → modelmgmt-agent annotates them (Google A2A protocol). |
+
+### Chat
+![Chat](docs/gifs/chat.gif)
+*Chat: natural-language queries, semantic search, and citations.*
+
+### Compare
+![Compare](docs/gifs/compare.gif)
+*Compare: multi-model semantic annotation (3 models, agreement/difference highlighting).*
+
+### A2A
+![A2A](docs/gifs/a2a.gif)
+*A2A: sentence generation (sg-agent) → semantic annotation (modelmgmt-agent) with wedge flow.*
+
+> **To capture or update GIFs:** See [docs/gifs/README.md](docs/gifs/README.md) for steps to record each flow.
+
+---
+
 A scalable multi-project architecture for building agentic AI systems with multi-agent collaboration.
 
 ## 🏗️ Architecture
