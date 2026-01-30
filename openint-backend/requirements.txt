@@ -22,6 +22,9 @@ sentence-transformers>=2.2.0
 # openint-vectordb / search agent (Milvus): required so search_agent can import milvus_client
 pymilvus>=2.3.0
 
+# LangGraph orchestration (select_agents -> run_agents -> aggregate) when backend runs agents
+langgraph>=0.2.0
+
 # Observability: OpenTelemetry tracing + structured JSON logging
 opentelemetry-api>=1.27.0
 opentelemetry-sdk>=1.27.0

@@ -25,7 +25,7 @@ _otel_available = False
 try:
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
     from opentelemetry.sdk.resources import Resource, SERVICE_NAME
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
     from opentelemetry.instrumentation.flask import FlaskInstrumentor
@@ -72,12 +72,14 @@ class JsonLogFormatter(logging.Formatter):
         if record.exc_info:
             log_dict["exception"] = self.formatException(record.exc_info)
         # Structured extra (e.g. logger.info("msg", extra={"query_id": "..."}))
-        # Sanitize: no full JSON blobs or long strings in logs
+        # Sanitize: never log full request/response JSON; skip or summarize only
         if self.include_extra:
             skip = {"name", "msg", "args", "created", "filename", "funcName", "levelname", "levelno", "lineno", "module", "msecs", "pathname", "process", "processName", "relativeCreated", "stack_info", "exc_info", "exc_text", "thread", "threadName", "message", "taskName", "otelTraceID", "otelSpanID", "otelServiceName", "otelTraceSampled"}
+            # Never include keys that might hold full request/response body
+            body_like_keys = frozenset({"request", "response", "body", "data", "json", "request_body", "response_body", "request_data", "response_data", "payload", "request_json", "response_json"})
             for k, v in record.__dict__.items():
-                if k not in skip and v is not None:
-                    log_dict[k] = _sanitize_log_value(v)
+                if k not in skip and v is not None and k.lower() not in body_like_keys:
+                    log_dict[k] = _sanitize_log_value(v, max_str_len=100)
         line = json.dumps(log_dict, default=str)
         # Prevent dumping huge JSON: cap line length so logs stay readable
         max_log_line = 2000
@@ -86,8 +88,12 @@ class JsonLogFormatter(logging.Formatter):
         return line
 
 
-def _sanitize_log_value(v: Any, max_str_len: int = 200) -> Any:
-    """Avoid logging full JSON blobs or long strings; return short summaries for large values."""
+# Keys that indicate API request/response payloads – never log full content
+_RESPONSE_LIKE_KEYS = frozenset({"answer", "sources", "results", "debug", "multi_model_analysis", "annotation", "models", "query", "message", "error", "success", "artifacts", "status"})
+
+
+def _sanitize_log_value(v: Any, max_str_len: int = 100) -> Any:
+    """Avoid logging full JSON blobs or long strings; never log request/response bodies."""
     if v is None:
         return None
     if isinstance(v, bool) or isinstance(v, (int, float)):
@@ -96,10 +102,13 @@ def _sanitize_log_value(v: Any, max_str_len: int = 200) -> Any:
         return v[:max_str_len] + ("..." if len(v) > max_str_len else "")
     if isinstance(v, (list, tuple)):
         n = len(v)
-        if n <= 5 and all(isinstance(x, (str, int, float, bool)) or x is None for x in v):
-            return list(v)
+        if n <= 4 and all(isinstance(x, (str, int, float, bool)) or x is None for x in v):
+            return [x if not isinstance(x, str) or len(x) <= max_str_len else x[:max_str_len] + "..." for x in v]
         return {"_type": "list", "len": n}
     if isinstance(v, dict):
+        keys_set = set(v.keys())
+        if keys_set & _RESPONSE_LIKE_KEYS and len(v) > 2:
+            return {"_type": "api_payload", "keys": list(v.keys())[:12], "len": len(v)}
         n = len(v)
         if n > 8:
             return {"_type": "dict", "keys": list(v.keys())[:10], "len": n}
@@ -152,6 +161,14 @@ def _configure_logging() -> None:
     root.addHandler(handler)
 
 
+class _NoopSpanExporter:
+    """No-op span exporter: do not print spans to console (avoids any request/response in span attributes)."""
+    def export(self, spans):
+        pass
+    def shutdown(self):
+        pass
+
+
 def _configure_tracing() -> None:
     """Configure OpenTelemetry TracerProvider."""
     if not _otel_available:
@@ -165,7 +182,7 @@ def _configure_tracing() -> None:
         if OTEL_ENDPOINT:
             exporter = OTLPSpanExporter(endpoint=OTEL_ENDPOINT)
         else:
-            exporter = ConsoleSpanExporter()
+            exporter = _NoopSpanExporter()
 
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)

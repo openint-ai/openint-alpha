@@ -90,6 +90,12 @@ if ! "$VENV_PYTHON" -c "import redis" 2>/dev/null; then
     "$VENV_PIP" install -q "redis>=5.0.0"
 fi
 
+# Ensure langgraph is available (LangGraph orchestration: select_agents -> run_agents -> aggregate)
+if ! "$VENV_PYTHON" -c "from langgraph.graph import StateGraph" 2>/dev/null; then
+    echo -e "${YELLOW}Installing langgraph into venv (required for LangGraph orchestrator)...${NC}"
+    "$VENV_PIP" install -q "langgraph>=0.2.0"
+fi
+
 # Check if backend is already running and kill it
 PORT=${PORT:-3001}
 if check_port $PORT; then

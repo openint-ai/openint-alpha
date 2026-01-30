@@ -3,7 +3,7 @@ OpenInt Backend
 Flask/FastAPI backend for API gateway to agent system
 """
 
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, g
 from flask_cors import CORS
 import hashlib
 import json
@@ -141,6 +141,50 @@ CORS(app, origins=CORS_ORIGINS)
 # Observability: JSON logging + OpenTelemetry tracing (idempotent)
 setup_observability(app)
 logger = get_logger(__name__)
+
+# --- UI interaction logging: log all API requests (method, path, key params, status, duration) ---
+def _ui_interaction_summary():
+    """Build a short summary of the request for logging. GET query params only (no body read)."""
+    path = request.path or ""
+    summary = {"method": request.method, "path": path}
+    if request.args and path.startswith("/api/"):
+        q = dict(request.args)
+        if "sentence" in q:
+            s = str(q["sentence"])
+            summary["sentence_preview"] = (s[:80] + "…") if len(s) > 80 else s
+        if "model" in q:
+            summary["model"] = q["model"]
+        if "query" in q:
+            s = str(q["query"])
+            summary["query_preview"] = (s[:80] + "…") if len(s) > 80 else s
+    return summary
+
+
+@app.before_request
+def _log_ui_request():
+    """Log every API request (UI interaction) with method, path, and GET params."""
+    if request.path and request.path.startswith("/api/"):
+        g._ui_request_start = time.time()
+        summary = _ui_interaction_summary()
+        logger.info("UI request", extra={"ui_interaction": summary})
+
+
+@app.after_request
+def _log_ui_response(response):
+    """Log API response status and duration for UI interactions."""
+    if request.path and request.path.startswith("/api/") and getattr(g, "_ui_request_start", None) is not None:
+        duration_ms = (time.time() - g._ui_request_start) * 1000
+        logger.info(
+            "UI response",
+            extra={
+                "path": request.path,
+                "method": request.method,
+                "status": response.status_code,
+                "duration_ms": round(duration_ms, 1),
+            },
+        )
+    return response
+
 
 # Redis cache for chat responses: vector DB results stored in Redis, served from Redis if same query within TTL.
 # Default: 127.0.0.1:6379 (backend on host → Redis in Docker with -p 6379:6379).
@@ -975,7 +1019,7 @@ def chat():
         
         # Process query through orchestrator (LangGraph: single call returns aggregated; else polling)
         agents_list = [a.name for a in orchestrator.registry.list_agents()]
-        logger.info("Processing query", extra={"query_preview": user_query[:100], "agents": agents_list})
+        logger.info("Processing query", extra={"query_preview": (user_query or "")[:80], "agent_count": len(agents_list)})
         _query_start = time.time()
         result = orchestrator.process_query(
             user_query=user_query,
@@ -2042,4 +2086,5 @@ if __name__ == '__main__':
         logger.info("Backend ready for chat requests (orchestrator initialized)")
     else:
         logger.warning("Backend listening but agent system not initialized – chat will return 503 until ready (typically 30–90s if agents load on first request)")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    flask_debug = (os.getenv("FLASK_DEBUG") or "").strip().lower() in ("1", "true", "yes")
+    app.run(host='0.0.0.0', port=port, debug=flask_debug)
