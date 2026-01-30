@@ -1,6 +1,8 @@
 """
 Agent Orchestrator
-Coordinates multi-agent workflows and manages agent collaboration
+Coordinates multi-agent workflows and manages agent collaboration.
+Uses LangGraph when agent_instances is provided (select_agents -> run_agents -> aggregate);
+otherwise falls back to message-bus + polling.
 """
 
 from typing import Dict, List, Optional, Any
@@ -20,6 +22,14 @@ from communication.agent_registry import AgentRegistry, AgentCapability, get_reg
 
 logger = logging.getLogger(__name__)
 
+# Optional LangGraph orchestrator (used when agent_instances is provided)
+try:
+    from communication.langgraph_orchestrator import LangGraphOrchestrator
+    _LANGGRAPH_AVAILABLE = True
+except ImportError:
+    LangGraphOrchestrator = None  # type: ignore
+    _LANGGRAPH_AVAILABLE = False
+
 
 @dataclass
 class QueryContext:
@@ -38,19 +48,38 @@ class QueryContext:
 class AgentOrchestrator:
     """
     Orchestrator for coordinating multiple agents.
-    Routes queries to appropriate agents and aggregates responses.
+    When agent_instances is provided, uses LangGraph (select_agents -> run_agents -> aggregate)
+    and process_query returns the aggregated result in one call. Otherwise uses message bus + polling.
     """
     
-    def __init__(self, message_bus: Optional[MessageBus] = None, registry: Optional[AgentRegistry] = None):
+    def __init__(
+        self,
+        message_bus: Optional[MessageBus] = None,
+        registry: Optional[AgentRegistry] = None,
+        agent_instances: Optional[Dict[str, Any]] = None,
+    ):
         self.message_bus = message_bus or get_message_bus()
         self.registry = registry or get_registry()
+        self._agent_instances = agent_instances or {}
+        self._langgraph_orchestrator: Optional[Any] = None
+
+        if self._agent_instances and _LANGGRAPH_AVAILABLE and LangGraphOrchestrator is not None:
+            try:
+                self._langgraph_orchestrator = LangGraphOrchestrator(
+                    registry=self.registry,
+                    agent_instances=self._agent_instances,
+                )
+                logger.info("LangGraph orchestrator enabled (agent_instances provided)")
+            except Exception as e:
+                logger.warning("LangGraph orchestrator not used: %s", e)
+
         self._active_queries: Dict[str, QueryContext] = {}
         self._query_responses: Dict[str, List[Dict[str, Any]]] = {}
-        self._response_lock = threading.Lock()  # thread-safe when agents run in parallel
-        
-        # Subscribe to agent responses
-        self.message_bus.subscribe("response", self._handle_agent_response)
-    
+        self._response_lock = threading.Lock()
+
+        if self._langgraph_orchestrator is None:
+            self.message_bus.subscribe("response", self._handle_agent_response)
+
     def process_query(
         self,
         user_query: str,
@@ -60,19 +89,23 @@ class AgentOrchestrator:
     ) -> Dict[str, Any]:
         """
         Process a user query using multiple agents.
-        
-        Args:
-            user_query: User's query text
-            session_id: Optional session ID
-            user_id: Optional user ID
-            metadata: Optional metadata
-            
-        Returns:
-            Aggregated response from agents
+        When LangGraph is used, returns the full aggregated result in one call (no polling).
+        Otherwise returns query_id/status/agents_queried and caller should use get_query_result.
         """
+        if self._langgraph_orchestrator is not None:
+            aggregated = self._langgraph_orchestrator.run(
+                user_query=user_query,
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata,
+            )
+            aggregated["agents_queried"] = [
+                r.get("agent") for r in aggregated.get("agent_responses", [])
+            ]
+            return aggregated
+
         import uuid
         query_id = str(uuid.uuid4())
-        
         context = QueryContext(
             query_id=query_id,
             user_query=user_query,
@@ -80,15 +113,12 @@ class AgentOrchestrator:
             user_id=user_id,
             metadata=metadata or {}
         )
-        
         self._active_queries[query_id] = context
         self._query_responses[query_id] = []
-        
-        # Determine which agents to involve (metadata can request semantic_annotate → modelmgmt-agent only)
+
         agents_to_query = self._select_agents(user_query, context.metadata)
-        
-        # Send query to all selected agents in parallel (avoids 2x latency when search + graph)
         logger.debug("Sending query to %s agent(s): %s", len(agents_to_query), [a.name for a in agents_to_query])
+
         def send_to_agent(agent_info):
             self.message_bus.send_message(
                 from_agent="orchestrator",
@@ -102,12 +132,13 @@ class AgentOrchestrator:
                 correlation_id=query_id
             )
             logger.debug("Sent message to %s", agent_info.name)
+
         threads = [threading.Thread(target=send_to_agent, args=(a,)) for a in agents_to_query]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        
+
         return {
             "query_id": query_id,
             "status": "processing",
@@ -203,13 +234,10 @@ class AgentOrchestrator:
     def get_query_result(self, query_id: str) -> Optional[Dict[str, Any]]:
         """
         Get aggregated result for a query.
-        
-        Args:
-            query_id: Query ID
-            
-        Returns:
-            Aggregated response or None if not found
+        When LangGraph is used, results are returned in process_query; this returns None.
         """
+        if self._langgraph_orchestrator is not None:
+            return None
         if query_id not in self._active_queries:
             return None
         

@@ -67,25 +67,61 @@ export default function A2A() {
           </button>
         </div>
 
-        {/* A2A flow animation: distinct colors + time per model */}
+        {/* LangGraph orchestration: select_agents → run_agents → aggregate (shown when running or done) */}
+        {phase !== 'idle' && (
+          <div className="flex flex-col items-center gap-2 mb-4 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3">
+            <span className="text-[10px] font-medium text-slate-500 uppercase tracking-widest" aria-hidden>
+              LangGraph orchestration
+            </span>
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              <LangGraphNode label="select_agents" active={phase === 'sg-agent'} done />
+              <span className="text-slate-300" aria-hidden>→</span>
+              <LangGraphNode label="run_agents" active={phase === 'sg-agent' || phase === 'modelmgmt-agent'} done={phase === 'done' || phase === 'error'} />
+              <span className="text-slate-300" aria-hidden>→</span>
+              <LangGraphNode label="aggregate" active={false} done={phase === 'done' || phase === 'error'} />
+            </div>
+          </div>
+        )}
+
+        {/* A2A flow animation: distinct colors + time per model + connectors to sub-flows */}
         <div className="flex items-center justify-center gap-4 py-8 px-4 bg-gray-50/80 rounded-xl border border-surface-200">
-          <AgentCard
-            agent="sg-agent"
-            name="sg-agent"
-            description="Sentence generation"
-            active={phase === 'sg-agent'}
-            done={phase !== 'idle' && phase !== 'sg-agent'}
-            timeMs={data?.sg_agent_time_ms ?? null}
-          />
+          <div className="flex flex-col items-center gap-0">
+            <AgentCard
+              agent="sg-agent"
+              name="sg-agent"
+              description="Sentence generation"
+              active={phase === 'sg-agent'}
+              done={phase !== 'idle' && phase !== 'sg-agent'}
+              timeMs={data?.sg_agent_time_ms ?? null}
+            />
+            {phase !== 'idle' && (
+              <>
+                <div className="flex justify-center w-full py-0.5" aria-hidden>
+                  <div className="w-px min-h-[10px] bg-violet-300 rounded-full" />
+                </div>
+                <SgAgentSubFlow active={phase === 'sg-agent'} />
+              </>
+            )}
+          </div>
           <Arrow active={phase === 'modelmgmt-agent' || phase === 'done'} />
-          <AgentCard
-            agent="modelmgmt-agent"
-            name="modelmgmt-agent"
-            description="Semantic annotation"
-            active={phase === 'modelmgmt-agent'}
-            done={phase === 'done' || phase === 'error'}
-            timeMs={data?.modelmgmt_agent_time_ms ?? null}
-          />
+          <div className="flex flex-col items-center gap-0">
+            <AgentCard
+              agent="modelmgmt-agent"
+              name="modelmgmt-agent"
+              description="Semantic annotation"
+              active={phase === 'modelmgmt-agent'}
+              done={phase === 'done' || phase === 'error'}
+              timeMs={data?.modelmgmt_agent_time_ms ?? null}
+            />
+            {(phase === 'modelmgmt-agent' || phase === 'done' || phase === 'error') && (
+              <>
+                <div className="flex justify-center w-full py-0.5" aria-hidden>
+                  <div className="w-px min-h-[10px] bg-teal-300 rounded-full" />
+                </div>
+                <ModelmgmtSubFlow active={phase === 'modelmgmt-agent'} />
+              </>
+            )}
+          </div>
         </div>
 
         {phase === 'error' && error && (
@@ -145,6 +181,123 @@ export default function A2A() {
         </div>
       )}
     </div>
+  );
+}
+
+/** sg-agent sub-flow: DataHub (schema context) → Ollama (sentence generation). Retained after run. */
+function SgAgentSubFlow({ active }: { active?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2 w-full max-w-[200px] min-h-[52px] rounded-lg border px-3 py-2 transition-colors ${active ? 'border-violet-300 bg-violet-50/90' : 'border-violet-200 bg-violet-50/60'}`}>
+      <SubFlowStep
+        icon={<DataHubIcon />}
+        label="DataHub"
+        sublabel="Schema context"
+        color="violet"
+      />
+      <AnimatedConnector color="violet" animate={active} />
+      <SubFlowStep
+        icon={<OllamaIcon />}
+        label="Ollama"
+        sublabel="Sentence gen"
+        color="violet"
+      />
+    </div>
+  );
+}
+
+/** modelmgmt-agent sub-flow: Hugging Face (3 models) → Semantic annotation. Retained after run. */
+function ModelmgmtSubFlow({ active }: { active?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2 w-full max-w-[220px] min-h-[52px] rounded-lg border px-3 py-2 transition-colors ${active ? 'border-teal-300 bg-teal-50/90' : 'border-teal-200 bg-teal-50/60'}`}>
+      <SubFlowStep
+        icon={<HuggingFaceIcon />}
+        label="Hugging Face"
+        sublabel="3 models"
+        color="teal"
+      />
+      <AnimatedConnector color="teal" animate={active} />
+      <SubFlowStep
+        icon={<AnnotationIcon />}
+        label="Annotation"
+        sublabel="Tags & highlights"
+        color="teal"
+      />
+    </div>
+  );
+}
+
+function SubFlowStep({
+  icon,
+  label,
+  sublabel,
+  color,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  sublabel: string;
+  color: 'violet' | 'teal';
+}) {
+  const textClass = color === 'violet' ? 'text-violet-700' : 'text-teal-700';
+  const subClass = color === 'violet' ? 'text-violet-500' : 'text-teal-500';
+  return (
+    <div className="flex flex-col items-center shrink-0">
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center bg-white border ${color === 'violet' ? 'border-violet-200 text-violet-600' : 'border-teal-200 text-teal-600'}`}>
+        {icon}
+      </div>
+      <span className={`text-[10px] font-semibold mt-1 ${textClass}`}>{label}</span>
+      <span className={`text-[9px] ${subClass}`}>{sublabel}</span>
+    </div>
+  );
+}
+
+function AnimatedConnector({ color, animate = true }: { color: 'violet' | 'teal'; animate?: boolean }) {
+  const dotClass = color === 'violet' ? 'bg-violet-400' : 'bg-teal-400';
+  const dotAnim = animate ? 'a2a-flow-dot' : '';
+  return (
+    <div className="flex-1 min-w-[32px] h-4 relative overflow-hidden flex items-center">
+      <div className="absolute inset-0 flex items-center border-t border-dashed border-gray-300" aria-hidden />
+      <span className={`absolute top-1/2 -translate-y-1/2 left-0 w-1.5 h-1.5 rounded-full ${dotClass} opacity-90 ${dotAnim}`} />
+      <span className={`absolute top-1/2 -translate-y-1/2 left-0 w-1.5 h-1.5 rounded-full ${dotClass} opacity-90 ${dotAnim} a2a-flow-dot-2`} />
+      <span className={`absolute top-1/2 -translate-y-1/2 left-0 w-1.5 h-1.5 rounded-full ${dotClass} opacity-90 ${dotAnim} a2a-flow-dot-3`} />
+    </div>
+  );
+}
+
+function DataHubIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <ellipse cx="12" cy="5" rx="9" ry="3" />
+      <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" />
+      <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" />
+    </svg>
+  );
+}
+
+function OllamaIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+
+function HuggingFaceIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+      <line x1="9" y1="9" x2="9.01" y2="9" />
+      <line x1="15" y1="9" x2="15.01" y2="9" />
+    </svg>
+  );
+}
+
+function AnnotationIcon() {
+  return (
+    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
+    </svg>
   );
 }
 
@@ -234,9 +387,24 @@ function WedgeSvg() {
   );
 }
 
+/** Single node in the LangGraph orchestration strip (select_agents, run_agents, aggregate). */
+function LangGraphNode({ label, active, done }: { label: string; active: boolean; done: boolean }) {
+  const base = 'text-[10px] font-medium px-2 py-1 rounded border transition-colors';
+  const style = active
+    ? 'border-amber-400 bg-amber-50 text-amber-800'
+    : done
+      ? 'border-slate-300 bg-slate-100 text-slate-600'
+      : 'border-slate-200 bg-white text-slate-500';
+  return (
+    <span className={`${base} ${style} ${active ? 'animate-pulse' : ''}`} aria-hidden>
+      {label}
+    </span>
+  );
+}
+
 function Arrow({ active }: { active: boolean }) {
   return (
-    <div className={`flex items-center transition-opacity duration-300 ${active ? 'opacity-100' : 'opacity-50'}`}>
+    <div className={`flex flex-col items-center justify-center gap-1 transition-opacity duration-300 ${active ? 'opacity-100' : 'opacity-50'}`}>
       <svg
         className={`w-10 h-10 transition-all duration-300 ${active ? 'text-brand-500 animate-[pulse_1s_ease-in-out_infinite]' : 'text-gray-400'}`}
         fill="none"
@@ -246,6 +414,9 @@ function Arrow({ active }: { active: boolean }) {
       >
         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
       </svg>
+      <span className="text-[10px] font-medium text-slate-400 uppercase tracking-widest select-none" aria-hidden>
+        A2A Protocol
+      </span>
     </div>
   );
 }

@@ -15,7 +15,6 @@ import { trace } from '@opentelemetry/api';
 import {
   WebTracerProvider,
   SimpleSpanProcessor,
-  ConsoleSpanExporter,
 } from '@opentelemetry/sdk-trace-web';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { ZoneContextManager } from '@opentelemetry/context-zone';

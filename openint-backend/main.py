@@ -206,39 +206,34 @@ def handle_uncaught(e):
 
 # Model loading and Redis are handled by modelmgmt-agent on first semantic request; backend does not preload.
 
-# Initialize orchestrator and agents
+# Initialize agents first, then orchestrator with agent_instances for LangGraph
 orchestrator: Optional[Any] = None
+_agent_instances: List[Any] = []
 if AGENT_SYSTEM_AVAILABLE:
     try:
-        orchestrator = AgentOrchestrator()
-        logger.info("Agent orchestrator initialized")
-        global _agent_instances
-        _agent_instances = []
-        try:
-            from agents.search_agent import SearchAgent
-            from agents.graph_agent import GraphAgent
-            from sg_agent.schema_generator_agent import SchemaGeneratorAgent
-            from modelmgmt_agent.modelmgmt_agent import ModelMgmtAgent
-            search_agent = SearchAgent()
-            _agent_instances.append(search_agent)
-            graph_agent = GraphAgent()
-            _agent_instances.append(graph_agent)
-            sg_agent = SchemaGeneratorAgent()
-            _agent_instances.append(sg_agent)
-            modelmgmt_agent = ModelMgmtAgent()
-            _agent_instances.append(modelmgmt_agent)
-            agents = orchestrator.registry.list_agents()
-            logger.info(
-                "Initialized agents (search, graph, sg-agent, modelmgmt-agent)",
-                extra={
-                    "agent_count": len(agents),
-                    "subscribers": list(orchestrator.message_bus._subscribers.keys()),
-                },
-            )
-        except Exception as agent_error:
-            logger.warning("Could not initialize agents", extra={"error": str(agent_error)}, exc_info=True)
-    except Exception as e:
-        logger.warning("Could not initialize orchestrator", extra={"error": str(e)})
+        from agents.search_agent import SearchAgent
+        from agents.graph_agent import GraphAgent
+        from sg_agent.schema_generator_agent import SchemaGeneratorAgent
+        from modelmgmt_agent.modelmgmt_agent import ModelMgmtAgent
+        search_agent = SearchAgent()
+        _agent_instances.append(search_agent)
+        graph_agent = GraphAgent()
+        _agent_instances.append(graph_agent)
+        sg_agent = SchemaGeneratorAgent()
+        _agent_instances.append(sg_agent)
+        modelmgmt_agent = ModelMgmtAgent()
+        _agent_instances.append(modelmgmt_agent)
+        agent_instances_map = {a.name: a for a in _agent_instances}
+        orchestrator = AgentOrchestrator(agent_instances=agent_instances_map)
+        logger.info(
+            "Initialized agents and LangGraph orchestrator",
+            extra={
+                "agent_count": len(_agent_instances),
+                "agent_names": list(agent_instances_map.keys()),
+            },
+        )
+    except Exception as agent_error:
+        logger.warning("Could not initialize agents/orchestrator", extra={"error": str(agent_error)}, exc_info=True)
 
 
 def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[str] = None) -> Dict[str, Any]:
@@ -963,41 +958,42 @@ def chat():
         metadata["embedding_model"] = finance_model
         metadata["best_model"] = finance_model
         
-        # Process query through orchestrator (don't wait for multi-model analysis if not needed)
+        # Process query through orchestrator (LangGraph: single call returns aggregated; else polling)
         agents_list = [a.name for a in orchestrator.registry.list_agents()]
         logger.info("Processing query", extra={"query_preview": user_query[:100], "agents": agents_list})
+        _query_start = time.time()
         result = orchestrator.process_query(
             user_query=user_query,
             session_id=session_id,
             user_id=user_id,
             metadata=metadata
         )
-        
-        logger.info("Query dispatched", extra={"query_id": result.get("query_id"), "agents_queried": result.get("agents_queried", [])})
-        # Get aggregated results
-        query_id = result.get("query_id")
-        if query_id:
-            # Wait for agents to respond (in production, use async/await or polling)
-            max_wait = 10  # seconds
-            wait_interval = 0.05  # seconds - check every 50ms for faster pickup once agents complete
-            waited = 0
-            aggregated = None
-            start_time = time.time()
 
+        # LangGraph path: result is already aggregated (status completed/no_responses)
+        # Legacy path: result has status "processing", poll get_query_result until done
+        aggregated = None
+        waited = 0.0
+        if result.get("status") in ("completed", "no_responses"):
+            aggregated = result
+            waited = time.time() - _query_start
+            logger.info("Query completed (LangGraph)", extra={"query_id": result.get("query_id"), "status": result.get("status")})
+        else:
+            query_id = result.get("query_id")
+            max_wait = 10
+            wait_interval = 0.05
+            start_time = time.time()
             logger.debug("Waiting for agent responses", extra={"max_wait": max_wait, "query_id": query_id})
             while waited < max_wait:
                 aggregated = orchestrator.get_query_result(query_id)
                 if aggregated:
                     status = aggregated.get("status", "unknown")
-                    logger.debug("Agent response status", extra={"status": status, "waited": round(waited, 1)})
                     if status != "processing":
                         break
                 time.sleep(wait_interval)
-                waited += wait_interval
+                waited = time.time() - start_time
             if not aggregated:
                 aggregated = orchestrator.get_query_result(query_id)
             if not aggregated:
-                logger.warning("No aggregated result from agents", extra={"waited": waited, "query_id": query_id})
                 agents_queried = result.get("agents_queried", [])
                 all_agents = [a.name for a in orchestrator.registry.list_agents()]
                 return jsonify({

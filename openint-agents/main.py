@@ -14,8 +14,8 @@ from communication.agent_registry import AgentCapability
 from agents.search_agent import SearchAgent
 
 
-def initialize_agents(orchestrator: AgentOrchestrator):
-    """Initialize and register all agents"""
+def initialize_agents(orchestrator: Optional[AgentOrchestrator] = None):
+    """Initialize and register all agents. Returns list of agent instances for LangGraph."""
     agents_list = []
 
     # Initialize Search Agent
@@ -58,15 +58,16 @@ def main():
     print("=" * 80)
     print("🏦 OpenInt Agents System")
     print("=" * 80)
-    
-    # Initialize orchestrator
-    orchestrator = AgentOrchestrator()
-    print("✅ Orchestrator initialized")
-    
-    # Initialize agents
-    agents = initialize_agents(orchestrator)
+
+    # Initialize agents first (they register with the global registry)
+    agents = initialize_agents()
     print(f"✅ Initialized {len(agents)} agent(s)")
-    
+
+    # Build orchestrator with agent instances for LangGraph (select_agents -> run_agents -> aggregate)
+    agent_instances = {a.name: a for a in agents}
+    orchestrator = AgentOrchestrator(agent_instances=agent_instances)
+    print("✅ Orchestrator initialized (LangGraph when agent_instances provided)")
+
     # List registered agents
     registry = orchestrator.registry
     print("\n📋 Registered Agents:")

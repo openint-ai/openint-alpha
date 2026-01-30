@@ -226,10 +226,6 @@ interface ModelPerformance {
   third: number;
 }
 
-function performancePoints(p: ModelPerformance): number {
-  return p.first * 3 + p.second * 2 + p.third * 1;
-}
-
 /** Update leaderboard from a compare result: rank models by semantic_annotation_time_ms (lower = better). */
 function updateLeaderboard(
   prev: { queryCount: number; modelStats: Record<string, ModelPerformance> },
@@ -567,7 +563,7 @@ export default function SemanticCompare() {
   const [error, setError] = useState<string | null>(null);
   const [exampleSeed, setExampleSeed] = useState(() => Date.now());
   const [usedInSession, setUsedInSession] = useState<Set<string>>(() => new Set());
-  const [leaderboard, setLeaderboard] = useState<{
+  const [_leaderboard, setLeaderboard] = useState<{
     queryCount: number;
     modelStats: Record<string, ModelPerformance>;
   }>(() => ({ queryCount: 0, modelStats: {} }));

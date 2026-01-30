@@ -29,5 +29,5 @@ UI_FRONTEND_PORT = int(os.getenv("UI_FRONTEND_PORT", "3000"))
 # Data Configuration
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "testdata"))
 
-# Logging Configuration
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+# Logging Configuration (debug logging off; use WARNING or INFO)
+LOG_LEVEL = os.getenv("LOG_LEVEL", "WARNING")

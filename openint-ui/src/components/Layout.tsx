@@ -11,7 +11,7 @@ export default function Layout() {
   const isCompare = loc.pathname === '/compare';
   const isA2A = loc.pathname === '/a2a';
   const isHelp = loc.pathname === '/help';
-  const isDocs = loc.pathname.startsWith('/docs');
+  const isDocs = loc.pathname.startsWith('/docs') || loc.pathname === '/help';
   const isDocsApi = loc.pathname === '/docs/api';
   const isDocsMcp = loc.pathname === '/docs/mcp';
 
@@ -58,14 +58,6 @@ export default function Layout() {
             >
               A2A
             </Link>
-            <Link
-              to="/help"
-              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                isHelp ? 'bg-brand-100 text-brand-700' : 'text-gray-600 hover:text-gray-900 hover:bg-surface-100'
-              }`}
-            >
-              Help
-            </Link>
             <div className="relative" ref={docsRef}>
               <button
                 type="button"
@@ -84,6 +76,14 @@ export default function Layout() {
               </button>
               {docsOpen && (
                 <div className="absolute right-0 top-full mt-1 min-w-[180px] rounded-xl border border-surface-200 bg-white py-1 shadow-lg z-40">
+                  <Link
+                    to="/help"
+                    className={`block px-4 py-2.5 text-sm font-medium transition-colors ${
+                      isHelp ? 'bg-brand-50 text-brand-700' : 'text-gray-700 hover:bg-surface-50'
+                    }`}
+                  >
+                    Help
+                  </Link>
                   <Link
                     to="/docs/api"
                     className={`block px-4 py-2.5 text-sm font-medium transition-colors ${

@@ -248,9 +248,9 @@ def my_endpoint():
 
 - [Architecture Overview](ARCHITECTURE.md)
 - [Migration Guide](MIGRATION_GUIDE.md)
-- [Agent System README](openInt-agents/README.md)
-- [Test Data README](openInt-testdata/README.md)
-- [UI Backend README](openInt-ui-backend/README.md)
+- [Agent System README](../openint-agents/README.md)
+- [Test Data README](../openint-testdata/README.md)
+- [Frontend README](../openint-ui/README.md)
 
 ## 🔧 Configuration
 

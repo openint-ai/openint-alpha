@@ -34,12 +34,17 @@ This project uses a modular architecture with separate projects for different co
 
 ```
 openint-alpha/
+├── docs/                 # Documentation (setup, architecture, guides)
 ├── openint-agents/       # AI Agents System (Multi-Agent)
 ├── openint-backend/      # Backend API (Flask)
 ├── openint-ui/           # Frontend (React)
 ├── openint-testdata/     # Test Data Generation & Loading
 ├── openint-datahub/      # DataHub Metadata Integration
+├── openint-vectordb/     # Vector DB (Milvus client)
+├── openint-graph/        # Graph DB (Neo4j client)
+├── openint-mcp/          # MCP Server
 ├── shared/               # Shared Utilities & Contracts
+├── samples/              # Sample files
 └── testdata/             # Generated Test Data (gitignored; generate via openint-testdata)
 ```
 
@@ -51,7 +56,7 @@ openint-alpha/
 - **REST API**: Backend API for frontend integration
 - **Modern UI**: React frontend with TypeScript
 - **Test Data**: Comprehensive test data generation tools
-- **DataHub Integration**: Metadata catalog and governance (see [DATAHUB_SETUP.md](./DATAHUB_SETUP.md))
+- **DataHub Integration**: Metadata catalog and governance (see [DATAHUB_SETUP.md](docs/DATAHUB_SETUP.md))
 
 ## 🚀 Quick Start
 
@@ -92,7 +97,7 @@ docker-compose -f docker-compose.datahub.yml up -d
 cd openint-datahub
 python ingest_metadata.py
 
-# See DATAHUB_SETUP.md for detailed instructions
+# See docs/DATAHUB_SETUP.md for detailed instructions
 ```
 
 ## 📦 Projects
@@ -125,8 +130,10 @@ Test data generation and loading:
 
 ## 📚 Documentation
 
-- [Architecture Overview](README_ARCHITECTURE.md) - Detailed architecture documentation
-- [Migration Guide](MIGRATION_GUIDE.md) - Guide for migrating from old structure
+Setup and reference docs live in [docs/](docs/) (DataHub, Quick Start, Troubleshooting, etc.).
+
+- [Architecture Overview](docs/README_ARCHITECTURE.md) - Detailed architecture documentation
+- [Migration Guide](docs/MIGRATION_GUIDE.md) - Guide for migrating from old structure
 - [Agent System](openint-agents/README.md) - Agent system documentation
 - [Backend API](openint-backend/README.md) - Backend API documentation
 - [Frontend](openint-ui/README.md) - Frontend documentation
