@@ -67,21 +67,42 @@ export default function A2A() {
           </button>
         </div>
 
-        {/* LangGraph orchestration: select_agents → run_agents → aggregate (shown when running or done) */}
-        {phase !== 'idle' && (
-          <div className="flex flex-col items-center gap-2 mb-4 rounded-lg border border-slate-200 bg-slate-50/80 px-4 py-3">
-            <span className="text-[10px] font-medium text-slate-500 uppercase tracking-widest" aria-hidden>
+        {/* LangGraph orchestration: always visible, highlighted when running — select_agents → run_agents → aggregate */}
+        <div
+          className={`flex flex-col items-center gap-3 mb-5 rounded-xl border-2 px-5 py-4 transition-all duration-300 ${
+            phase !== 'idle'
+              ? 'border-amber-400 bg-amber-50/90 shadow-md shadow-amber-200/40'
+              : 'border-amber-200 bg-amber-50/50'
+          }`}
+          role="region"
+          aria-label="LangGraph orchestration"
+        >
+          <div className="flex items-center gap-2">
+            <LangGraphBadgeIcon />
+            <span
+              className={`text-xs font-semibold uppercase tracking-widest transition-colors ${
+                phase !== 'idle' ? 'text-amber-800' : 'text-amber-600'
+              }`}
+              aria-hidden
+            >
               LangGraph orchestration
             </span>
-            <div className="flex items-center gap-1.5 flex-wrap justify-center">
-              <LangGraphNode label="select_agents" active={phase === 'sg-agent'} done />
-              <span className="text-slate-300" aria-hidden>→</span>
-              <LangGraphNode label="run_agents" active={phase === 'sg-agent' || phase === 'modelmgmt-agent'} done={phase === 'done' || phase === 'error'} />
-              <span className="text-slate-300" aria-hidden>→</span>
-              <LangGraphNode label="aggregate" active={false} done={phase === 'done' || phase === 'error'} />
-            </div>
           </div>
-        )}
+          <p className="text-[11px] text-amber-700/90 text-center max-w-md" aria-hidden>
+            StateGraph: select_agents → run_agents → aggregate
+          </p>
+          <div className="flex items-center gap-2 flex-wrap justify-center">
+            <LangGraphNode label="select_agents" active={phase === 'sg-agent'} done={phase !== 'idle'} />
+            <LangGraphArrow active={phase !== 'idle'} />
+            <LangGraphNode
+              label="run_agents"
+              active={phase === 'sg-agent' || phase === 'modelmgmt-agent'}
+              done={phase === 'done' || phase === 'error'}
+            />
+            <LangGraphArrow active={phase !== 'idle'} />
+            <LangGraphNode label="aggregate" active={false} done={phase === 'done' || phase === 'error'} />
+          </div>
+        </div>
 
         {/* A2A flow animation: distinct colors + time per model + connectors to sub-flows */}
         <div className="flex items-center justify-center gap-4 py-8 px-4 bg-gray-50/80 rounded-xl border border-surface-200">
@@ -387,16 +408,48 @@ function WedgeSvg() {
   );
 }
 
+/** Icon for LangGraph orchestration header (graph nodes). */
+function LangGraphBadgeIcon() {
+  return (
+    <svg
+      className="w-5 h-5 text-amber-600"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v2M12 20v2M2 12h2M20 12h2" />
+      <path d="M5.64 5.64l1.42 1.42M16.94 16.94l1.42 1.42M5.64 18.36l1.42-1.42M16.94 7.06l1.42-1.42" />
+    </svg>
+  );
+}
+
+/** Arrow between LangGraph nodes; subtle pulse when flow is active. */
+function LangGraphArrow({ active }: { active: boolean }) {
+  return (
+    <span
+      className={`inline-flex items-center text-amber-500 transition-opacity ${active ? 'opacity-100' : 'opacity-60'}`}
+      aria-hidden
+    >
+      →
+    </span>
+  );
+}
+
 /** Single node in the LangGraph orchestration strip (select_agents, run_agents, aggregate). */
 function LangGraphNode({ label, active, done }: { label: string; active: boolean; done: boolean }) {
-  const base = 'text-[10px] font-medium px-2 py-1 rounded border transition-colors';
+  const base = 'text-[11px] font-semibold px-3 py-1.5 rounded-lg border-2 transition-all duration-200';
   const style = active
-    ? 'border-amber-400 bg-amber-50 text-amber-800'
+    ? 'border-amber-500 bg-amber-100 text-amber-900 shadow-sm'
     : done
-      ? 'border-slate-300 bg-slate-100 text-slate-600'
-      : 'border-slate-200 bg-white text-slate-500';
+      ? 'border-amber-300 bg-amber-50/80 text-amber-800'
+      : 'border-amber-200 bg-white/80 text-amber-700/80';
   return (
-    <span className={`${base} ${style} ${active ? 'animate-pulse' : ''}`} aria-hidden>
+    <span className={`${base} ${style} ${active ? 'animate-pulse ring-2 ring-amber-300/50' : ''}`} aria-hidden>
       {label}
     </span>
   );
