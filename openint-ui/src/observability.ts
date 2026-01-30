@@ -9,6 +9,7 @@
  * - VITE_OTEL_SERVICE_NAME: service name (default: openint-ui)
  * - VITE_OTEL_EXPORTER_OTLP_ENDPOINT: OTLP HTTP endpoint (e.g. http://localhost:4318/v1/traces). If unset, traces log to console.
  * - VITE_LOG_JSON: set to "1" for JSON log lines (default: 1 in production build)
+ * - VITE_LOG_LEVEL: minimum level to emit (default: warn). Debug logging is off project-wide; set to "debug" or "info" to enable.
  */
 
 import { trace } from '@opentelemetry/api';
@@ -41,6 +42,16 @@ const OTEL_ENDPOINT =
 const SERVICE_NAME =
   typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_OTEL_SERVICE_NAME as string) || 'openint-ui' : 'openint-ui';
 
+// Debug logging off project-wide; minimum level defaults to 'warn'
+const LOG_LEVEL_ORDER: LogLevel[] = ['debug', 'info', 'warn', 'error'];
+const MIN_LOG_LEVEL: LogLevel =
+  (typeof import.meta !== 'undefined' ? (import.meta.env?.VITE_LOG_LEVEL as string) || 'warn' : 'warn') as LogLevel;
+function shouldEmit(level: LogLevel): boolean {
+  const idx = LOG_LEVEL_ORDER.indexOf(level);
+  const minIdx = LOG_LEVEL_ORDER.indexOf(LOG_LEVEL_ORDER.includes(MIN_LOG_LEVEL) ? MIN_LOG_LEVEL : 'warn');
+  return idx >= 0 && idx >= minIdx;
+}
+
 function getTraceContext(): { trace_id?: string; span_id?: string } {
   try {
     const span = trace.getActiveSpan();
@@ -53,6 +64,7 @@ function getTraceContext(): { trace_id?: string; span_id?: string } {
 }
 
 function emitLog(level: LogLevel, logger: string, message: string, extra: Record<string, unknown> = {}): void {
+  if (!shouldEmit(level)) return;
   const record: LogRecord = {
     timestamp: new Date().toISOString(),
     level,

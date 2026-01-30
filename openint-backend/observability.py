@@ -9,7 +9,7 @@ Environment:
 - OTEL_SERVICE_NAME: service name (default: openint-backend)
 - OTEL_EXPORTER_OTLP_ENDPOINT: OTLP HTTP endpoint for traces (e.g. http://localhost:4318/v1/traces). If unset, traces go to console.
 - LOG_JSON: set to 1 for JSON logs (default: 1 when OTEL_EXPORTER_OTLP_ENDPOINT is set, else 0 for dev-friendly)
-- LOG_LEVEL: WARNING (default, log only issues) or INFO. DEBUG is disabled.
+- LOG_LEVEL: WARNING (default, log only issues) or INFO. DEBUG is disabled project-wide.
 - OTEL_PYTHON_LOG_CORRELATION: set to true to add trace_id/span_id to log records (default: true)
 """
 
@@ -127,11 +127,11 @@ def _install_logging_instrumentation() -> None:
 
 
 def _configure_logging() -> None:
-    """Configure root logger with JSON or human-friendly format. Default: WARNING (log only issues). Debug logging is off."""
+    """Configure root logger. Default: WARNING. Debug logging is disabled project-wide (DEBUG is capped to INFO)."""
     root = logging.getLogger()
     level_name = (os.environ.get("LOG_LEVEL") or "WARNING").strip().upper()
     if level_name == "DEBUG":
-        level_name = "INFO"
+        level_name = "INFO"  # Debug logging turned off project-wide
     level = getattr(logging, level_name, logging.WARNING)
     root.setLevel(level)
     # Remove existing handlers to avoid duplicate lines

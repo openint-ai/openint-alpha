@@ -3,7 +3,7 @@ OpenInt Backend
 Flask/FastAPI backend for API gateway to agent system
 """
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import hashlib
 import json
@@ -46,6 +46,11 @@ if _hf_token and _hf_token.strip():
 # Add openint-agents and openint-vectordb to path so modelmgmt-agent and search_agent (milvus_client) resolve
 current_dir = _backend_dir
 _repo_root = os.path.abspath(os.path.join(current_dir, '..'))
+# Merged UI: serve openint-ui/dist when SERVE_UI=true or FLASK_ENV=production and dist exists
+_ui_dist = os.getenv("OPENINT_UI_DIST") or os.path.join(_repo_root, "openint-ui", "dist")
+_serve_ui = (os.getenv("SERVE_UI") or "").strip().lower() in ("1", "true", "yes") or (
+    os.path.isdir(_ui_dist) and (os.getenv("FLASK_ENV") or "").strip().lower() == "production"
+)
 agent_system_path = os.path.abspath(os.path.join(_repo_root, 'openint-agents'))
 if agent_system_path not in sys.path:
     sys.path.insert(0, agent_system_path)
@@ -224,9 +229,19 @@ if AGENT_SYSTEM_AVAILABLE:
         modelmgmt_agent = ModelMgmtAgent()
         _agent_instances.append(modelmgmt_agent)
         agent_instances_map = {a.name: a for a in _agent_instances}
-        orchestrator = AgentOrchestrator(agent_instances=agent_instances_map)
+        agent_runner = None
+        try:
+            import a2a as _a2a
+            _a2a.set_agent_instances(agent_instances_map)
+            agent_runner = lambda name, query, ctx: _a2a.invoke_agent_via_a2a(name, query, ctx)
+        except ImportError:
+            pass
+        orchestrator = AgentOrchestrator(
+            agent_instances=agent_instances_map,
+            agent_runner=agent_runner,
+        )
         logger.info(
-            "Initialized agents and LangGraph orchestrator",
+            "Initialized agents and LangGraph orchestrator (A2A for agent communication)",
             extra={
                 "agent_count": len(_agent_instances),
                 "agent_names": list(agent_instances_map.keys()),
@@ -1779,8 +1794,7 @@ def preview_semantic_analysis_multi():
 # --- A2A (Agent-to-Agent) protocol ---
 try:
     from a2a import (
-        _agent_card_sg_agent,
-        _agent_card_modelmgmt_agent,
+        get_agent_card as a2a_get_agent_card,
         handle_json_rpc as a2a_handle_json_rpc,
     )
     A2A_AVAILABLE = True
@@ -1793,20 +1807,17 @@ def a2a_agent_card(agent_id):
     """Return A2A Agent Card for discovery (Google A2A spec)."""
     if not A2A_AVAILABLE:
         return jsonify({"error": "A2A not available"}), 503
-    if agent_id == "sg-agent":
-        return jsonify(_agent_card_sg_agent())
-    if agent_id == "modelmgmt-agent":
-        return jsonify(_agent_card_modelmgmt_agent())
-    return jsonify({"error": f"Unknown agent: {agent_id}"}), 404
+    card = a2a_get_agent_card(agent_id)
+    if card is None:
+        return jsonify({"error": f"Unknown agent: {agent_id}"}), 404
+    return jsonify(card)
 
 
 @app.route('/api/a2a/agents/<agent_id>', methods=['POST'])
 def a2a_agent_json_rpc(agent_id):
-    """A2A message/send via JSON-RPC 2.0 (Google A2A spec)."""
+    """A2A message/send via JSON-RPC 2.0 (Google A2A spec). All agents use A2A."""
     if not A2A_AVAILABLE:
         return jsonify({"jsonrpc": "2.0", "id": None, "error": {"code": -32603, "message": "A2A not available"}}), 503
-    if agent_id not in ("sg-agent", "modelmgmt-agent"):
-        return jsonify({"jsonrpc": "2.0", "id": None, "error": {"code": -32601, "message": f"Unknown agent: {agent_id}"}}), 404
     body = request.get_data()
     resp, status = a2a_handle_json_rpc(body, agent_id)
     return jsonify(resp), status
@@ -1995,6 +2006,26 @@ def suggestions_lucky():
             "success": False,
             "error": str(e),
         }), 500
+
+
+# --- Merged UI: serve built openint-ui/dist (SPA) when SERVE_UI or FLASK_ENV=production ---
+@app.route("/")
+def serve_index():
+    if not _serve_ui:
+        return jsonify({"message": "OpenInt API", "docs": "/api/health"}), 200
+    return send_from_directory(_ui_dist, "index.html")
+
+
+@app.route("/<path:path>")
+def serve_spa(path):
+    if not _serve_ui:
+        return jsonify({"error": "Not found"}), 404
+    if path.startswith("api/"):
+        return jsonify({"error": "Not found"}), 404
+    full = os.path.join(_ui_dist, path)
+    if os.path.isfile(full):
+        return send_from_directory(_ui_dist, path)
+    return send_from_directory(_ui_dist, "index.html")
 
 
 if __name__ == '__main__':

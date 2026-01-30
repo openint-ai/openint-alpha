@@ -8,7 +8,7 @@ How the product looks, feels, and works:
 |--------|---------------|
 | **Chat** | Ask questions in natural language; get answers with semantic search and source citations. |
 | **Compare** | Enter a sentence and see how 3 embedding models annotate it (green = agreement, amber = disagreement). |
-| **A2A** | Agent-to-Agent: sg-agent generates sentences → modelmgmt-agent annotates them (Google A2A protocol). |
+| **A2A** | Agent-to-Agent: all agent communication uses the A2A protocol; LangGraph orchestrates select_agents → run_agents → aggregate; sg-agent and modelmgmt-agent run the sentence → annotation flow. |
 
 ### Chat
 ![Chat](docs/gifs/chat.gif)
@@ -51,7 +51,7 @@ openint-alpha/
 ## 🎯 Features
 
 - **Multi-Agent System**: Agents that communicate and collaborate
-- **Agent Communication**: Message bus and orchestration framework
+- **Agent Communication**: All agent communication over **A2A (Agent-to-Agent)** protocol; LangGraph orchestration (select_agents → run_agents → aggregate)
 - **Vector Database**: Milvus integration for semantic search
 - **REST API**: Backend API for frontend integration
 - **Modern UI**: React frontend with TypeScript
@@ -104,10 +104,9 @@ python ingest_metadata.py
 
 ### openint-agents
 Multi-agent AI system with:
-- Agent communication framework
-- Message bus for inter-agent communication
+- **A2A protocol**: All agent communication (search_agent, graph_agent, sg-agent, modelmgmt-agent) goes over Google A2A (Agent Card + message/send)
+- **LangGraph orchestration**: select_agents → run_agents → aggregate; backend passes an A2A runner so orchestrator invokes agents via A2A
 - Agent registry for service discovery
-- Orchestrator for coordinating workflows
 - **modelmgmt-agent**: Model registry (Hugging Face + Redis) and sentence semantic annotation; used by the backend for `/api/semantic/*` when agents are loaded
 
 ### openint-backend
@@ -128,10 +127,24 @@ Test data generation and loading:
 - Load data into Milvus
 - Data validation tools
 
+## Deploy to AWS EC2 (merged backend+UI)
+
+Build the UI and deploy to an EC2 instance in one flow:
+
+```bash
+./build.sh
+export OPENINT_EC2_KEY=~/.ssh/openint.pem
+export OPENINT_EC2_HOST=ec2-user@ec2-3-148-183-18.us-east-2.compute.amazonaws.com
+./deploy_to_ec2.sh
+```
+
+See [docs/DEPLOY_EC2.md](docs/DEPLOY_EC2.md) for env vars, systemd, and Nginx.
+
 ## 📚 Documentation
 
 Setup and reference docs live in [docs/](docs/) (DataHub, Quick Start, Troubleshooting, etc.).
 
+- [Deploy to EC2](docs/DEPLOY_EC2.md) - Build merged backend+UI and deploy to AWS EC2
 - [Architecture Overview](docs/README_ARCHITECTURE.md) - Detailed architecture documentation
 - [Migration Guide](docs/MIGRATION_GUIDE.md) - Guide for migrating from old structure
 - [Agent System](openint-agents/README.md) - Agent system documentation

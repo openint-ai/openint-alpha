@@ -2,12 +2,22 @@
 Main entry point for OpenInt Agents System
 """
 
+import logging
 import os
 import sys
 from typing import Optional
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Turn off debug logging project-wide (cap at INFO, default WARNING)
+_log_level = (os.environ.get("LOG_LEVEL") or "WARNING").strip().upper()
+if _log_level == "DEBUG":
+    _log_level = "INFO"
+logging.basicConfig(
+    level=getattr(logging, _log_level, logging.WARNING),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 from communication.orchestrator import AgentOrchestrator
 from communication.agent_registry import AgentCapability

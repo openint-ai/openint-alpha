@@ -24,6 +24,7 @@ The **Schema Generator Agent** connects to DataHub (running locally), reads data
 | `DATAHUB_TOKEN` | DataHub API token (or `.datahub_token` in openint-datahub) | — |
 | `OLLAMA_HOST` | Ollama API base URL | `http://localhost:11434` |
 | `OLLAMA_MODEL` | Ollama model name for sentence generation | `llama3.2` |
+| `REDIS_HOST` / `REDIS_PORT` | Redis for schema cache (survives restarts) | `127.0.0.1` / `6379` |
 
 ## Capability
 

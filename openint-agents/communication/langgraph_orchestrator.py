@@ -11,7 +11,7 @@ import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -100,13 +100,19 @@ def _select_agent_names(
     return [a.name for a in unique]
 
 
+# Type for A2A agent runner: (agent_id, user_query, context) -> (results, message, metadata)
+AgentRunner = Callable[[str, str, Dict[str, Any]], Tuple[List[Any], str, Dict[str, Any]]]
+
+
 def build_orchestrator_graph(
     registry: AgentRegistry,
     agent_instances: Dict[str, Any],
+    agent_runner: Optional[AgentRunner] = None,
 ) -> Any:
     """
     Build and compile the LangGraph: select_agents -> run_agents -> aggregate.
     agent_instances: map agent name -> BaseAgent instance (must have process_query(query, context)).
+    agent_runner: when provided, all agent invocations go through A2A via this callable.
     """
     if not LANGGRAPH_AVAILABLE:
         raise RuntimeError("langgraph is not installed; add langgraph to requirements and reinstall.")
@@ -123,10 +129,28 @@ def build_orchestrator_graph(
     def run_agents_node(state: OrchestratorState) -> Dict[str, Any]:
         names = state.get("selected_agent_names") or []
         user_query = state["user_query"]
-        context = state.get("metadata") or {}
+        context = dict(state.get("metadata") or {})
+        if state.get("session_id"):
+            context["session_id"] = state["session_id"]
         responses: List[Dict[str, Any]] = []
 
         def run_one(name: str) -> Optional[Dict[str, Any]]:
+            if agent_runner:
+                # All agent communication over A2A
+                try:
+                    results, message, metadata = agent_runner(name, user_query, context)
+                    return {
+                        "agent": name,
+                        "content": {"results": results, "message": message, "metadata": metadata},
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                except Exception as e:
+                    logger.warning("Agent %s A2A error: %s", name, e, exc_info=True)
+                    return {
+                        "agent": name,
+                        "content": {"error": str(e), "message": f"Error: {e}"},
+                        "timestamp": datetime.now().isoformat(),
+                    }
             agent = agent_instances.get(name)
             if not agent:
                 logger.warning("No instance for agent %s", name)
@@ -217,12 +241,18 @@ class LangGraphOrchestrator:
         self,
         registry: Optional[AgentRegistry] = None,
         agent_instances: Optional[Dict[str, Any]] = None,
+        agent_runner: Optional[AgentRunner] = None,
     ):
         self.registry = registry or get_registry()
         self._agent_instances = agent_instances or {}
+        self._agent_runner = agent_runner
         self._graph = None
         if self._agent_instances:
-            self._graph = build_orchestrator_graph(self.registry, self._agent_instances)
+            self._graph = build_orchestrator_graph(
+                self.registry,
+                self._agent_instances,
+                agent_runner=self._agent_runner,
+            )
 
     def run(
         self,

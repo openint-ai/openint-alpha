@@ -45,6 +45,14 @@ Check readiness with: `curl -s http://localhost:3001/api/ready`. If you get 503,
 - `GET /api/semantic/models` - List available model IDs and dimensions.
 - `GET /api/semantic/models-with-meta` - List supported models with metadata (id, display_name, author, description, details, url).
 
+### A2A (Agent-to-Agent) protocol
+
+**All agent communication** in this project uses the A2A protocol. The backend registers agent instances with the A2A module and passes an A2A runner to the LangGraph orchestrator so every agent call (search_agent, graph_agent, sg-agent, modelmgmt-agent) goes over A2A.
+
+- `GET /api/a2a/agents/<agent_id>/card` - Agent Card for discovery (sg-agent, modelmgmt-agent, search_agent, graph_agent).
+- `POST /api/a2a/agents/<agent_id>` - A2A message/send (JSON-RPC 2.0). Same agents as above.
+- `POST /api/a2a/run` - Run the sentence-generation → annotation flow (sg-agent → modelmgmt-agent).
+
 ## Model loading and Redis
 
 **modelmgmt-agent** (openint-agents) owns model downloads, Redis-backed model storage, and sentence annotation for the 3 dropdown models. The backend does **not** load models or manage the model registry; it only calls modelmgmt-agent’s analyzer for semantic endpoints. Models are loaded by the agent on first semantic request. See [openint-agents/modelmgmt_agent/README.md](../openint-agents/modelmgmt_agent/README.md).

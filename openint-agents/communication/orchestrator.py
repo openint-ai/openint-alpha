@@ -57,10 +57,12 @@ class AgentOrchestrator:
         message_bus: Optional[MessageBus] = None,
         registry: Optional[AgentRegistry] = None,
         agent_instances: Optional[Dict[str, Any]] = None,
+        agent_runner: Optional[Any] = None,
     ):
         self.message_bus = message_bus or get_message_bus()
         self.registry = registry or get_registry()
         self._agent_instances = agent_instances or {}
+        self._agent_runner = agent_runner
         self._langgraph_orchestrator: Optional[Any] = None
 
         if self._agent_instances and _LANGGRAPH_AVAILABLE and LangGraphOrchestrator is not None:
@@ -68,8 +70,12 @@ class AgentOrchestrator:
                 self._langgraph_orchestrator = LangGraphOrchestrator(
                     registry=self.registry,
                     agent_instances=self._agent_instances,
+                    agent_runner=self._agent_runner,
                 )
-                logger.info("LangGraph orchestrator enabled (agent_instances provided)")
+                logger.info(
+                    "LangGraph orchestrator enabled (agent_instances provided%s)",
+                    ", A2A runner" if self._agent_runner else "",
+                )
             except Exception as e:
                 logger.warning("LangGraph orchestrator not used: %s", e)
 

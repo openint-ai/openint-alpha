@@ -97,14 +97,15 @@ python server.py
 
 - **Search Agent** — Semantic search in Milvus vector DB  
 - **Graph Agent** — Graph/relationship queries  
-- **Schema Generator Agent (sg-agent)** — DataHub-backed schema and example sentences  
-- **Model Management Agent (modelmgmt-agent)** — Hugging Face + Redis model registry; annotates sentences with semantic tags  
+- **Schema Generator Agent (sg-agent)** — DataHub-backed schema and example sentences; schema cache in Redis so it survives restarts  
+- **Model Management Agent (modelmgmt-agent)** — Hugging Face + Redis model registry; annotates sentences with semantic tags; session/task state in Redis for multi-day tasks  
 
 ### Communication
 
-- **Message bus** — Pub/sub (in-process; Redis optional for scaling)  
-- **Agent registry** — Service discovery and capabilities  
-- **Orchestrator** — Routes queries to agents and aggregates responses  
+- **A2A (Agent-to-Agent)** — When run via the OpenInt backend, **all agent communication** uses the A2A protocol (Agent Card + message/send). The LangGraph orchestrator invokes search_agent and graph_agent via `invoke_agent_via_a2a`; sg-agent and modelmgmt-agent are exposed as A2A endpoints.
+- **LangGraph** — Orchestration flow: select_agents → run_agents → aggregate. The backend registers agent instances with the A2A module and passes an A2A runner to the orchestrator so every agent call goes over A2A.
+- **Message bus** — Fallback pub/sub when not using LangGraph (e.g. standalone agent system).
+- **Agent registry** — Service discovery and capabilities.  
 
 ---
 
@@ -137,7 +138,7 @@ In production, the **backend** runs the orchestrator and agents; clients use the
 
 ## Environment
 
-- **openint-agents:** Optional `.env` for Milvus, Ollama (sg-agent), etc.  
+- **openint-agents:** Optional `.env` for Milvus, Ollama (sg-agent), etc. **REDIS_HOST** / **REDIS_PORT** (default 127.0.0.1:6379) for **agent state**: sg-agent schema cache and modelmgmt-agent session/task state persist in Redis so agent memory survives restarts and multi-day tasks.
 - **openint-backend:** Uses same env; ensure backend can resolve `openint-agents` (e.g. repo layout or `PYTHONPATH`).  
 - **openint-mcp:** `OPENINT_BACKEND_URL` (default `http://localhost:3001`).
 

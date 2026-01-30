@@ -5,6 +5,7 @@ modelmgmt-agent downloads embedding models from **Hugging Face**, stores them in
 ## Responsibilities
 
 - **Model registry**: Download models from Hugging Face; store in Redis so replicas hydrate in O(1). Thundering-herd protection: one writer, others wait.
+- **Agent state (Redis)**: When `context.session_id` is set, session/task state (last_models_used, task_id, last_query) is persisted in Redis so agent memory survives restarts and multi-day tasks.
 - **Sentence annotation**: Run one or all configured models on a sentence; return tags, highlighted segments, and schema-based matches (DataHub schema from sg-agent / openint-datahub).
 
 ## Capabilities
@@ -13,7 +14,7 @@ modelmgmt-agent downloads embedding models from **Hugging Face**, stores them in
 
 ## Environment
 
-- **REDIS_HOST** / **REDIS_PORT**: Same as chat cache (default 127.0.0.1:6379). Used for model blob storage.
+- **REDIS_HOST** / **REDIS_PORT**: Same as chat cache (default 127.0.0.1:6379). Used for model blob storage and **agent state** (session/task state so memory survives restarts and multi-day tasks).
 - **HF_TOKEN** / **HUGGING_FACE_HUB_TOKEN**: Optional; higher rate limits for Hugging Face.
 - **MULTI_MODEL_SEMANTIC_MODELS**: Comma-separated model IDs (default: mukaj/fin-mpnet-base, ProsusAI/finbert, sentence-transformers/all-mpnet-base-v2).
 

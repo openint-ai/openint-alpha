@@ -59,11 +59,13 @@ openint-alpha/
 
 ## Agent Communication Framework
 
-Agents communicate through:
-1. **Message Bus**: Pub/sub system for agent communication
-2. **Agent Registry**: Discovery and routing of agents
-3. **Shared State**: Common state management
-4. **API Gateway**: External interface to agent system
+All agent communication uses the **A2A (Agent-to-Agent)** protocol (Google A2A spec: Agent Card + message/send). The backend exposes each agent as an A2A endpoint and the LangGraph orchestrator invokes agents via A2A.
+
+1. **A2A Protocol**: Every agent (search_agent, graph_agent, sg-agent, modelmgmt-agent) is exposed as an A2A server; the orchestrator calls agents through `invoke_agent_via_a2a` so all traffic goes over A2A.
+2. **LangGraph**: Orchestration flow select_agents → run_agents → aggregate; the backend passes an A2A runner into the orchestrator.
+3. **Agent Registry**: Discovery and routing of agents.
+4. **Message Bus**: Fallback for standalone agent runs (no backend).
+5. **API Gateway**: External interface to the agent system.
 
 ## Communication Flow
 

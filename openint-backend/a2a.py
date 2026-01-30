@@ -1,14 +1,30 @@
 """
 A2A (Agent-to-Agent) protocol support — Google's A2A spec.
-Exposes sg-agent and modelmgmt-agent as A2A servers (Agent Card + message/send).
+All agent communication in this project uses A2A (Agent Card + message/send).
+Exposes sg-agent, modelmgmt-agent, search_agent, and graph_agent as A2A servers.
 """
 
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Registry of agent instances for A2A handlers that need to call process_query (search_agent, graph_agent)
+_agent_instances: Dict[str, Any] = {}
+
+
+def set_agent_instances(instances: Dict[str, Any]) -> None:
+    """Register agent instances so A2A handlers can invoke search_agent and graph_agent."""
+    global _agent_instances
+    _agent_instances = dict(instances or {})
+
+
+def get_agent_instance(agent_id: str) -> Optional[Any]:
+    """Return the registered agent instance for agent_id, or None."""
+    return _agent_instances.get(agent_id)
+
 
 # Base URL for A2A agents (backend origin); override via env if needed
 def _base_url() -> str:
@@ -58,6 +74,60 @@ def _agent_card_modelmgmt_agent() -> Dict[str, Any]:
             }
         ],
     }
+
+
+def _agent_card_search_agent() -> Dict[str, Any]:
+    return {
+        "name": "Search Agent (search_agent)",
+        "description": "Semantic search over the vector database (Milvus). Returns relevant documents and sources for natural-language queries.",
+        "url": f"{_base_url()}/api/a2a/agents/search_agent",
+        "version": "1.0.0",
+        "capabilities": {"streaming": False, "pushNotifications": False},
+        "defaultInputModes": ["application/json", "text/plain"],
+        "defaultOutputModes": ["application/json"],
+        "skills": [
+            {
+                "id": "search",
+                "name": "Semantic search",
+                "description": "Run semantic search for the given query. Send the search query as message text.",
+                "tags": ["search", "semantic", "vector", "milvus"],
+                "examples": ["Show me transactions in California", "Find customers with high balance"],
+            }
+        ],
+    }
+
+
+def _agent_card_graph_agent() -> Dict[str, Any]:
+    return {
+        "name": "Graph Agent (graph_agent)",
+        "description": "Graph and relationship queries over Neo4j. Returns connected entities and paths for natural-language queries.",
+        "url": f"{_base_url()}/api/a2a/agents/graph_agent",
+        "version": "1.0.0",
+        "capabilities": {"streaming": False, "pushNotifications": False},
+        "defaultInputModes": ["application/json", "text/plain"],
+        "defaultOutputModes": ["application/json"],
+        "skills": [
+            {
+                "id": "graph",
+                "name": "Graph query",
+                "description": "Run graph/relationship query for the given question. Send the question as message text.",
+                "tags": ["graph", "neo4j", "relationships", "entities"],
+                "examples": ["How is customer X related to account Y?", "Find path between two entities"],
+            }
+        ],
+    }
+
+
+def get_agent_card(agent_id: str) -> Optional[Dict[str, Any]]:
+    """Return A2A Agent Card for agent_id, or None if unknown."""
+    cards = {
+        "sg-agent": _agent_card_sg_agent,
+        "modelmgmt-agent": _agent_card_modelmgmt_agent,
+        "search_agent": _agent_card_search_agent,
+        "graph_agent": _agent_card_graph_agent,
+    }
+    fn = cards.get(agent_id)
+    return fn() if fn else None
 
 
 def _text_from_message(message: Dict[str, Any]) -> str:
@@ -175,6 +245,82 @@ def handle_sg_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         )
 
 
+def handle_search_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    A2A message/send for search_agent. Params: { message: Message, context?: Dict }.
+    Runs semantic search via registered agent instance; returns Task with results artifact.
+    """
+    task_id = str(uuid.uuid4())
+    context_id = str(uuid.uuid4())
+    message = params.get("message") or {}
+    text = _text_from_message(message)
+    context = params.get("context") or {}
+    if not text:
+        return _make_task(
+            task_id, context_id, "failed",
+            message_parts=[{"kind": "text", "text": "No search query in message."}],
+        )
+    agent = get_agent_instance("search_agent")
+    if not agent:
+        return _make_task(
+            task_id, context_id, "failed",
+            message_parts=[{"kind": "text", "text": "search_agent not registered."}],
+        )
+    try:
+        resp = agent.process_query(text, context)
+        artifacts = [{
+            "artifactId": str(uuid.uuid4()),
+            "name": "search_results",
+            "description": "Semantic search results",
+            "parts": [{"kind": "data", "data": {"results": resp.results, "message": resp.message, "metadata": resp.metadata or {}}}],
+        }]
+        return _make_task(task_id, context_id, "completed", artifacts=artifacts)
+    except Exception as e:
+        logger.exception("search_agent A2A message/send failed")
+        return _make_task(
+            task_id, context_id, "failed",
+            message_parts=[{"kind": "text", "text": str(e)}],
+        )
+
+
+def handle_graph_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    A2A message/send for graph_agent. Params: { message: Message, context?: Dict }.
+    Runs graph query via registered agent instance; returns Task with results artifact.
+    """
+    task_id = str(uuid.uuid4())
+    context_id = str(uuid.uuid4())
+    message = params.get("message") or {}
+    text = _text_from_message(message)
+    context = params.get("context") or {}
+    if not text:
+        return _make_task(
+            task_id, context_id, "failed",
+            message_parts=[{"kind": "text", "text": "No query in message."}],
+        )
+    agent = get_agent_instance("graph_agent")
+    if not agent:
+        return _make_task(
+            task_id, context_id, "failed",
+            message_parts=[{"kind": "text", "text": "graph_agent not registered."}],
+        )
+    try:
+        resp = agent.process_query(text, context)
+        artifacts = [{
+            "artifactId": str(uuid.uuid4()),
+            "name": "graph_results",
+            "description": "Graph query results",
+            "parts": [{"kind": "data", "data": {"results": resp.results, "message": resp.message, "metadata": resp.metadata or {}}}],
+        }]
+        return _make_task(task_id, context_id, "completed", artifacts=artifacts)
+    except Exception as e:
+        logger.exception("graph_agent A2A message/send failed")
+        return _make_task(
+            task_id, context_id, "failed",
+            message_parts=[{"kind": "text", "text": str(e)}],
+        )
+
+
 def handle_modelmgmt_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
     """
     A2A message/send for modelmgmt-agent. Params: { message: Message }.
@@ -238,6 +384,10 @@ def handle_json_rpc(body: bytes, agent_id: str) -> tuple[Dict[str, Any], int]:
         result = handle_sg_agent_message_send(params)
     elif agent_id == "modelmgmt-agent":
         result = handle_modelmgmt_agent_message_send(params)
+    elif agent_id == "search_agent":
+        result = handle_search_agent_message_send(params)
+    elif agent_id == "graph_agent":
+        result = handle_graph_agent_message_send(params)
     else:
         return {
             "jsonrpc": "2.0",
@@ -245,3 +395,47 @@ def handle_json_rpc(body: bytes, agent_id: str) -> tuple[Dict[str, Any], int]:
             "error": {"code": -32601, "message": f"Unknown agent: {agent_id}"},
         }, 200
     return {"jsonrpc": "2.0", "id": rpc_id, "result": result}, 200
+
+
+def invoke_agent_via_a2a(
+    agent_id: str,
+    user_query: str,
+    context: Dict[str, Any],
+) -> Tuple[List[Any], str, Dict[str, Any]]:
+    """
+    Invoke an agent via the A2A protocol (message/send) and return (results, message, metadata).
+    Used by the LangGraph orchestrator so all agent communication goes over A2A.
+    Supports search_agent and graph_agent only (orchestrator uses these).
+    """
+    if agent_id not in ("search_agent", "graph_agent"):
+        return [], "Unsupported agent for A2A invoke", {}
+    params = {
+        "message": {"parts": [{"kind": "text", "text": user_query}]},
+        "context": context,
+    }
+    if agent_id == "search_agent":
+        task = handle_search_agent_message_send(params)
+    else:
+        task = handle_graph_agent_message_send(params)
+    status = task.get("status") or {}
+    if status.get("state") == "failed":
+        msg = ""
+        if status.get("message") and isinstance(status["message"], dict):
+            parts = status["message"].get("parts") or []
+            for p in parts:
+                if p.get("kind") == "text" and "text" in p:
+                    msg = p["text"]
+                    break
+        return [], msg or "A2A task failed", {}
+    artifacts = task.get("artifacts") or []
+    for art in artifacts:
+        for part in art.get("parts") or []:
+            if part.get("kind") == "data" and "data" in part:
+                d = part["data"]
+                if isinstance(d, dict):
+                    return (
+                        d.get("results", []),
+                        d.get("message", ""),
+                        d.get("metadata", {}),
+                    )
+    return [], "", {}

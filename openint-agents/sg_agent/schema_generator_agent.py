@@ -18,10 +18,17 @@ if _AGENTS_ROOT not in sys.path:
 from agents.base_agent import BaseAgent, AgentResponse
 from communication.agent_registry import AgentCapability
 
-from sg_agent.datahub_client import get_schema
+from communication.agent_state_store import (
+    get_state as get_agent_state,
+    set_state as set_agent_state,
+    SCHEMA_CACHE_TTL,
+    is_available as state_store_available,
+)
+from sg_agent.datahub_client import get_schema_and_source
 from sg_agent.sentence_generator import generate_sentences
 
 logger = logging.getLogger(__name__)
+AGENT_NAME = "sg-agent"
 
 
 class SchemaGeneratorAgent(BaseAgent):
@@ -64,10 +71,23 @@ class SchemaGeneratorAgent(BaseAgent):
         self._schema_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
     def _get_schema(self) -> Dict[str, Dict[str, Any]]:
-        """Get schema (cached)."""
-        if self._schema_cache is None:
-            self._schema_cache = get_schema()
-        return self._schema_cache
+        """Get schema: from Redis if available, else from DataHub/openint-datahub; in-memory fallback when Redis down."""
+        # Try Redis-backed cache first (survives restarts)
+        if state_store_available():
+            cached = get_agent_state(AGENT_NAME, "schema")
+            if cached is not None and isinstance(cached, dict):
+                logger.debug("sg-agent: schema loaded from Redis (%s datasets)", len(cached))
+                return cached
+        # In-memory fallback
+        if self._schema_cache is not None:
+            return self._schema_cache
+        schema, _ = get_schema_and_source()
+        if not schema:
+            return {}
+        if state_store_available():
+            set_agent_state(AGENT_NAME, "schema", schema, ttl_seconds=SCHEMA_CACHE_TTL)
+        self._schema_cache = schema
+        return schema
 
     def process_query(self, query: str, context: Dict[str, Any] = None) -> AgentResponse:
         """

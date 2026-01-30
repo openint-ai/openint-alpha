@@ -17,10 +17,17 @@ if _AGENTS_ROOT not in sys.path:
 
 from agents.base_agent import BaseAgent, AgentResponse
 from communication.agent_registry import AgentCapability
+from communication.agent_state_store import (
+    get_state as get_agent_state,
+    set_state as set_agent_state,
+    SESSION_STATE_TTL,
+    is_available as state_store_available,
+)
 
 from modelmgmt_agent.semantic_analyzer import get_analyzer, analyze_query_multi_model
 
 logger = logging.getLogger(__name__)
+AGENT_NAME = "modelmgmt-agent"
 
 
 class ModelMgmtAgent(BaseAgent):
@@ -64,7 +71,8 @@ class ModelMgmtAgent(BaseAgent):
     def process_query(self, query: str, context: Dict[str, Any] = None) -> AgentResponse:
         """
         Process a sentence-annotation request.
-        Query is the sentence to annotate; context can have "model" (single model) or use all models.
+        Query is the sentence to annotate; context can have "model" (single model), "session_id", "task_id", or use all models.
+        Session/task state is persisted in Redis when session_id is present so state survives restarts and multi-day tasks.
         """
         context = context or {}
         sentence = (query or "").strip()
@@ -75,6 +83,15 @@ class ModelMgmtAgent(BaseAgent):
                 message="Empty sentence",
                 metadata={"file_type": "semantic_annotation"},
             )
+        session_id = (context.get("session_id") or "").strip()
+        if session_id and state_store_available():
+            saved = get_agent_state(AGENT_NAME, "session", session_id)
+            if saved and isinstance(saved, dict):
+                # Restore last_models_used / task_id for continuity
+                if context.get("model") is None and saved.get("last_models_used"):
+                    context = {**context, "last_models_used": saved["last_models_used"]}
+                if context.get("task_id") is None and saved.get("task_id"):
+                    context = {**context, "task_id": saved.get("task_id")}
         single_model = context.get("model", "").strip()
         parallel = context.get("parallel", True)
         try:
@@ -122,6 +139,21 @@ class ModelMgmtAgent(BaseAgent):
                         metadata={"file_type": "semantic_annotation"},
                     )
                 analysis["success"] = True
+            # Persist session state to Redis so it survives restarts and multi-day tasks
+            if session_id and state_store_available():
+                from datetime import datetime
+                set_agent_state(
+                    AGENT_NAME,
+                    "session",
+                    session_id,
+                    value={
+                        "last_query": sentence[:500],
+                        "last_models_used": single_model or "multi",
+                        "task_id": context.get("task_id"),
+                        "updated_at": datetime.utcnow().isoformat() + "Z",
+                    },
+                    ttl_seconds=SESSION_STATE_TTL,
+                )
             return AgentResponse(
                 success=True,
                 results=[{"content": "", "metadata": {"file_type": "semantic_annotation", "analysis": analysis}}],
