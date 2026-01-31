@@ -158,6 +158,12 @@ The loader needs `sentence-transformers` for embeddings. If it fails, batches ar
 pip install sentence-transformers
 ```
 
+### 5. Vector results less accurate than graph?
+Graph (Neo4j) uses exact ID lookups; vector (Milvus) uses semantic similarity. To improve:
+- **LLM:** Set `OLLAMA_MODEL=qwen2.5:7b` (or `martain7r/finance-llama-8b` for finance-specific)
+- **Embedding:** Set `EMBEDDING_MODEL=mukaj/fin-mpnet-base` (re-load Milvus after)
+See `docs/MODEL_RECOMMENDATIONS.md` for full guidance.
+
 ---
 
 ## Environment Variables

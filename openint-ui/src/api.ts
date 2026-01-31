@@ -340,7 +340,7 @@ export interface LuckySuggestion {
   category?: string;
   /** "ollama" or "template" */
   source?: string;
-  /** When source is "ollama", the model name (e.g. llama3.2) */
+  /** When source is "ollama", the model name (e.g. qwen2.5:7b) */
   llm_model?: string;
   /** Time in ms for sg-agent to generate the sentence (schema + LLM/template) */
   sg_agent_time_ms?: number;

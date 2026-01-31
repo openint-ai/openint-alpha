@@ -24,4 +24,4 @@ Exposed as an A2A agent at `/api/a2a/agents/sentiment-agent`. Send the sentence 
 
 ## Configuration
 
-Uses `OLLAMA_HOST` and `OLLAMA_MODEL` (default: llama3.2).
+Uses `OLLAMA_HOST` and `OLLAMA_MODEL` (default: qwen2.5:7b).

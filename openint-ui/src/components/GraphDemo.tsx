@@ -18,6 +18,7 @@ import {
   type GraphQueryNaturalResponse,
   type GraphNodeDetailsResponse,
 } from '../api';
+import { getModelDisplayName, getModelUrl } from '../utils/modelMeta';
 
 /** Example natural language questions for the graph (LLM generates Cypher from Neo4j schema). */
 const GRAPH_EXAMPLE_QUESTIONS: { label: string; question: string; category: string }[] = [
@@ -573,8 +574,21 @@ export default function GraphDemo() {
                       </p>
                       {'llm_model' in queryResult && (queryResult.llm_model || queryResult.llm_time_ms != null) && (
                         <p className="mt-2 text-xs text-gray-500">
-                          {queryResult.llm_model}
-                          {queryResult.llm_time_ms != null ? ` · ${queryResult.llm_time_ms}ms` : ''}
+                          {getModelUrl(queryResult.llm_model as string) ? (
+                            <>
+                              <a
+                                href={getModelUrl(queryResult.llm_model as string)!}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-brand-600 hover:underline"
+                              >
+                                {getModelDisplayName(queryResult.llm_model as string)}
+                              </a>
+                              {queryResult.llm_time_ms != null ? ` · ${queryResult.llm_time_ms}ms` : ''}
+                            </>
+                          ) : (
+                            <>{getModelDisplayName(queryResult.llm_model as string)}{queryResult.llm_time_ms != null ? ` · ${queryResult.llm_time_ms}ms` : ''}</>
+                          )}
                         </p>
                       )}
                     </div>

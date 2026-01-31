@@ -12,6 +12,7 @@ import {
   type SemanticPreviewModelResult,
   type SemanticPreviewSegment,
 } from '../api';
+import { getModelDisplayName, getModelUrl } from '../utils/modelMeta';
 
 type SuggestionItem = { query: string; category: string };
 
@@ -363,8 +364,9 @@ function ModelColumn({
 }) {
   const segments = result?.highlighted_segments ?? [];
   const tags = result?.tags ?? [];
-  const displayName = MODEL_DISPLAY_NAMES[modelId] ?? modelId;
+  const displayName = getModelDisplayName(modelId);
   const source = getModelSource(modelId);
+  const modelHref = getModelUrl(modelId) ?? (modelId.includes('/') ? `https://huggingface.co/${modelId}` : null);
 
   const timeMs = result?.semantic_annotation_time_ms;
 
@@ -381,19 +383,19 @@ function ModelColumn({
               <span className="flex-shrink-0 text-gray-400">
                 <SourceIcon kind={source.kind} />
               </span>
-              {source.kind === 'huggingface' ? (
+              {source.kind === 'huggingface' && modelHref ? (
                 <a
-                  href={`https://huggingface.co/${modelId}`}
+                  href={modelHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="truncate text-brand-600 hover:text-brand-700 hover:underline"
-                  title={`View on Hugging Face: ${modelId}`}
+                  title={`View on Hugging Face: ${displayName}`}
                 >
                   {source.name}
                 </a>
-              ) : (
+              ) : source ? (
                 <span className="truncate">{source.name}</span>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -744,7 +746,14 @@ export default function SemanticCompare() {
             {luckySource?.llm_model && (
               <p className="text-xs text-gray-500 flex items-center gap-1.5 mt-1" role="status">
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-gray-100 text-gray-400" aria-hidden>◇</span>
-                Generated with <span className="font-medium text-gray-600">{luckySource.llm_model}</span>
+                Generated with{' '}
+                {getModelUrl(luckySource.llm_model) ? (
+                  <a href={getModelUrl(luckySource.llm_model)!} target="_blank" rel="noopener noreferrer" className="font-medium text-brand-600 hover:underline">
+                    {getModelDisplayName(luckySource.llm_model)}
+                  </a>
+                ) : (
+                  <span className="font-medium text-gray-600">{getModelDisplayName(luckySource.llm_model)}</span>
+                )}
                 {luckySource.sg_agent_time_ms != null && (
                   <span
                     className="text-gray-400 font-mono tabular-nums text-[11px]"

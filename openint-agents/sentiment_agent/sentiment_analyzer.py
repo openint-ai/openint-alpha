@@ -93,7 +93,7 @@ def analyze_sentence_sentiment(text: str) -> Tuple[Optional[str], Optional[float
         return (None, None, None, None, "No text provided")
 
     host = (os.environ.get("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.environ.get("OLLAMA_MODEL") or "llama3.2"
+    model = os.environ.get("OLLAMA_MODEL") or "qwen2.5:7b"
 
     prompt = f"""Classify the sentiment/tone of this sentence. Reply with ONLY valid JSON, no other text:
 {{"sentiment":"short phrase","confidence":0.8,"emoji":"🔍","reasoning":"brief why"}}

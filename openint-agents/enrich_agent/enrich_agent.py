@@ -156,7 +156,7 @@ def _infer_label_from_context_llm(context: str) -> Optional[str]:
     if not context or len(context.strip()) < 5:
         return None
     host = (os.environ.get("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.environ.get("OLLAMA_MODEL") or "llama3.2"
+    model = os.environ.get("OLLAMA_MODEL") or "qwen2.5:7b"
     prompt = f"""In this text snippet, a numeric ID (10+ digits) appears. What entity type does it refer to?
 Options: Customer, Transaction, Dispute.
 Reply with ONLY one word: Customer, Transaction, or Dispute.

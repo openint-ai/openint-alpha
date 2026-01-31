@@ -9,6 +9,7 @@ import {
   ENTITY_TABLE_ORDER,
   FIELD_LABELS,
 } from '../utils/structuredData';
+import { getModelMeta, getModelUrl, getModelDisplayName } from '../utils/modelMeta';
 
 type SuggestionItem = { query: string; category: string };
 
@@ -116,38 +117,10 @@ function getSemanticColor(type: string): string {
   return SEMANTIC_COLORS[type] ?? 'bg-gradient-to-r from-gray-100 to-gray-50 text-gray-800 border-gray-300 shadow-sm';
 }
 
-/** Model metadata for the info popup: author, description, details, and Hugging Face URL. */
-const MODEL_META: Record<
-  string,
-  { author: string; description: string; details: string; url: string }
-> = {
-  'mukaj/fin-mpnet-base': {
-    author: 'mukaj',
-    description:
-      'State-of-the-art for financial documents (79.91 FiQA). Trained on 150k+ financial document QA examples. Best for banking/finance semantic search.',
-    details: '768 dimensions · Fast · Use for banking/finance applications.',
-    url: 'https://huggingface.co/mukaj/fin-mpnet-base',
-  },
-  'ProsusAI/finbert': {
-    author: 'Prosus AI',
-    description:
-      'Finance-oriented model suited for financial text understanding and semantic tasks.',
-    details: 'Finance domain · Use for financial sentiment and understanding.',
-    url: 'https://huggingface.co/ProsusAI/finbert',
-  },
-  'sentence-transformers/all-mpnet-base-v2': {
-    author: 'sentence-transformers',
-    description:
-      'Popular, powerful open source model. Strong general-purpose embeddings (768d). Good balance of quality and speed.',
-    details: '768 dimensions · Popular · Use for general semantic tasks.',
-    url: 'https://huggingface.co/sentence-transformers/all-mpnet-base-v2',
-  },
-};
-
 /** Clickable model name that opens a modal with author, description, details, and link to Hugging Face. */
 function ModelLabelWithInfo({ modelId, modelLabel }: { modelId: string; modelLabel: string }) {
   const [popupOpen, setPopupOpen] = useState(false);
-  const meta = modelId && modelId !== 'all' ? MODEL_META[modelId] : null;
+  const meta = modelId && modelId !== 'all' ? getModelMeta(modelId) : null;
 
   useEffect(() => {
     if (!popupOpen) return;
@@ -204,22 +177,30 @@ function ModelLabelWithInfo({ modelId, modelLabel }: { modelId: string; modelLab
                 </svg>
               </button>
             </div>
-            <p className="text-[11px] text-gray-600">
-              <span className="font-semibold text-gray-700">By {meta.author}</span>
-            </p>
-            <p className="text-[12px] text-gray-700 leading-snug">{meta.description}</p>
-            <p className="text-[11px] text-gray-500">{meta.details}</p>
-            <a
-              href={meta.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-[12px] font-medium text-white hover:bg-brand-600 transition-colors"
-            >
-              View on Hugging Face
-              <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-              </svg>
-            </a>
+            {meta.author && (
+              <p className="text-[11px] text-gray-600">
+                <span className="font-semibold text-gray-700">By {meta.author}</span>
+              </p>
+            )}
+            {meta.description && (
+              <p className="text-[12px] text-gray-700 leading-snug">{meta.description}</p>
+            )}
+            {meta.details && (
+              <p className="text-[11px] text-gray-500">{meta.details}</p>
+            )}
+            {meta.url && (
+              <a
+                href={meta.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-brand-500 px-3 py-2 text-[12px] font-medium text-white hover:bg-brand-600 transition-colors"
+              >
+                View on Hugging Face
+                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            )}
           </div>
         </div>
       )}
@@ -756,11 +737,13 @@ function DebugToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
 }
 
 
-/** Subtle visualization: sentence → embedding vector → Vector DB (shown under each answer) */
+/** Subtle visualization: sentence → embedding vector → Vector DB (shown under each answer). Shows model name with Hugging Face link when available. */
 function EmbeddingVisualization({ dims, model }: { dims: number; model?: string }) {
   const safeDims = typeof dims === 'number' && Number.isFinite(dims) ? dims : 0;
   const bars = 20;
   const tooltip = `Your question is turned into a ${safeDims}-dimensional vector (embedding) and used to search the vector DB.`;
+  const modelUrl = model ? getModelUrl(model) : null;
+  const modelLabel = model ? getModelDisplayName(model) : '';
   return (
     <div
       className="mt-2.5 pt-2.5 border-t border-surface-50/80 flex flex-wrap items-center gap-1.5 text-[9px] text-gray-400/90"
@@ -780,9 +763,24 @@ function EmbeddingVisualization({ dims, model }: { dims: number; model?: string 
       <span className="shrink-0 font-mono text-gray-500/90">{safeDims}d</span>
       <span className="text-gray-300/70">→</span>
       <span className="shrink-0 text-gray-400/80">Vector DB</span>
-      {(model != null && String(model).trim()) ? (
-        <span className="shrink-0 text-gray-400/70 truncate max-w-[100px]" title={String(model)}>
-          · {model}
+      {modelLabel ? (
+        <span className="shrink-0 text-gray-400/70 flex items-center gap-1">
+          · Model:{' '}
+          {modelUrl ? (
+            <a
+              href={modelUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-brand-500/90 hover:text-brand-600 hover:underline truncate max-w-[120px]"
+              title={`${modelLabel} on Hugging Face`}
+            >
+              {modelLabel}
+            </a>
+          ) : (
+            <span className="truncate max-w-[120px]" title={String(model)}>
+              {modelLabel}
+            </span>
+          )}
         </span>
       ) : null}
     </div>

@@ -118,7 +118,7 @@ def _extract_cypher_from_llm(text: str) -> str:
 def _generate_cypher_with_ollama(question: str) -> Tuple[Optional[str], Optional[str]]:
     """Use Ollama to generate Cypher from natural language. Returns (cypher, error)."""
     host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    model = os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
     prompt = f"""You are a Neo4j Cypher expert. Given the schema below and the user question, return ONLY a valid Cypher query. No explanation, no markdown, no code block wrapper.
 
 {GRAPH_SCHEMA_SUMMARY}
@@ -159,7 +159,7 @@ User question: {question}"""
     except urllib.error.URLError as e:
         msg = str(e.reason) if getattr(e, "reason", None) else str(e)
         if "Connection refused" in msg or "111" in msg:
-            msg = "Ollama not running. Start ollama serve and pull a model (e.g. ollama pull llama3.2)."
+            msg = "Ollama not running. Start ollama serve and pull a model (e.g. ollama pull qwen2.5:7b)."
         return (None, msg)
     except Exception as e:
         return (None, str(e))

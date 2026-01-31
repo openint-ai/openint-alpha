@@ -317,7 +317,8 @@ def _restore_ids_from_original(prompt: str, reply: str) -> str:
     - customer_id (BIGINT): 9-19 digit numbers
     - transaction_id (UUID): xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
     - dispute_id (INT): 6-10 digit numbers
-    The LLM sometimes corrupts them (truncation, comma-formatting) or wrongly replaces with XXX-XX-XXXX.
+    Also replaces hallucinated IDs (LLM output IDs not in original) with original IDs.
+    Strips entity clauses (transaction_id, dispute_id) when user did not mention them.
     """
     import re
     if not reply or not prompt:
@@ -325,18 +326,65 @@ def _restore_ids_from_original(prompt: str, reply: str) -> str:
     original = _extract_original_from_prompt(prompt)
     if not original:
         return reply
-    # Find numeric IDs (BIGINT customer_id, INT dispute_id): 9-19 digits, exclude SSN/phone
+    orig_lower = original.lower()
+    # What entities did the user mention?
+    user_mentions_customer = any(
+        w in orig_lower for w in ("customer", "cust", "customer_id", "customer id")
+    )
+    user_mentions_transaction = any(
+        w in orig_lower for w in ("transaction", "txn", "txns", "wire", "ach", "debit", "credit")
+    )
+    user_mentions_dispute = any(
+        w in orig_lower for w in ("dispute", "disputed", "dispute_id")
+    )
+    # Find IDs in original
     plain_numeric = re.findall(r"\b\d{9,19}\b", original)
-    # Find UUIDs (transaction_id)
     uuid_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
     plain_uuids = re.findall(uuid_pattern, original, re.IGNORECASE)
-    # If LLM wrongly turned a customer/transaction/dispute ID into SSN placeholder, restore it
+    orig_ids = set(plain_numeric) | set(plain_uuids)
+
+    # Strip entity clauses user did not mention (e.g. "transaction_id = UUID ('...')")
+    if not user_mentions_transaction:
+        reply = re.sub(
+            r"transaction_id\s*=\s*(?:UUID\s*)?\(['\"]?[0-9a-f\-]+['\"]?\)\s*,?\s*",
+            "", reply, flags=re.IGNORECASE
+        )
+    if not user_mentions_dispute:
+        reply = re.sub(
+            r"dispute_id\s*=\s*(?:INT\s*)?\(['\"]?\d+['\"]?\)\s*,?\s*",
+            "", reply, flags=re.IGNORECASE
+        )
+
+    # Replace hallucinated numeric IDs with original
+    reply_numeric = re.findall(r"\b\d{9,19}\b", reply)
+    for wrong_id in reply_numeric:
+        if wrong_id not in orig_ids and plain_numeric:
+            reply = re.sub(r"\b" + re.escape(wrong_id) + r"\b", plain_numeric[0], reply, count=1)
+            plain_numeric = plain_numeric[1:]  # use next for subsequent replacements
+            if not plain_numeric:
+                break
+
+    # Replace hallucinated UUIDs with original
+    reply_uuids = re.findall(uuid_pattern, reply, re.IGNORECASE)
+    for wrong_uuid in reply_uuids:
+        if wrong_uuid.lower() not in (u.lower() for u in plain_uuids) and plain_uuids:
+            reply = re.sub(
+                r"\b" + re.escape(wrong_uuid) + r"\b",
+                plain_uuids[0], reply, count=1, flags=re.IGNORECASE
+            )
+            plain_uuids = plain_uuids[1:]
+            if not plain_uuids:
+                break
+
+    # SSN placeholder
     has_ssn_in_original = bool(re.search(r"\d{3}-\d{2}-\d{4}", original))
     ssn_placeholder = re.compile(r"XXX-XX-XXXX", re.IGNORECASE)
     if not has_ssn_in_original and plain_numeric and ssn_placeholder.search(reply):
         reply = ssn_placeholder.sub(plain_numeric[0], reply, count=1)
+
+    # Corrupted forms (typos, comma formatting)
+    plain_numeric = re.findall(r"\b\d{9,19}\b", original)
     for orig in plain_numeric:
-        # Replace corrupted forms in reply with exact original
         if len(orig) > 1:
             reply = re.sub(r"\b" + re.escape(orig[:-1]) + r"\b", orig, reply)
         if orig[0] != "0" and len(orig) > 1:
@@ -346,9 +394,24 @@ def _restore_ids_from_original(prompt: str, reply: str) -> str:
         comma_fmt = re.sub(r"(\d)(?=(\d{3})+(?!\d))", r"\1,", orig)
         reply = reply.replace(comma_fmt, orig)
     for orig in plain_uuids:
-        # Restore UUID if LLM removed hyphens or altered it
         no_hyphens = orig.replace("-", "")
         reply = re.sub(r"\b" + re.escape(no_hyphens) + r"\b", orig, reply, flags=re.IGNORECASE)
+
+    # Convert leftover structured format to natural language (e.g. "customer_id = BIGINT ('123')" -> "transactions for customer 123")
+    orig_numeric = re.findall(r"\b\d{9,19}\b", original)
+    if re.search(r"customer_id\s*=\s*(?:BIGINT\s*)?\(", reply, re.IGNORECASE) and user_mentions_customer and orig_numeric:
+        cid = orig_numeric[0]
+        reply = re.sub(
+            r"customer_id\s*=\s*(?:BIGINT\s*)?\(['\"]?\d+['\"]?\)\s*,?\s*",
+            "", reply, flags=re.IGNORECASE
+        )
+        rest = " ".join(reply.split()).strip()
+        if user_mentions_transaction:
+            reply = f"transactions for customer {cid}" + (f" {rest}" if rest and "customer" not in rest.lower() else "")
+        else:
+            reply = f"customer {cid}" + (f" {rest}" if rest and "customer" not in rest.lower() else "")
+    reply = re.sub(r",\s*,", ",", reply).strip().strip(",")
+    reply = " ".join(reply.split())
     return reply
 
 
@@ -358,7 +421,7 @@ def _sg_agent_fix_or_generate_via_ollama(prompt: str) -> Optional[str]:
     import ssl
     import urllib.request
     host = (os.environ.get("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.environ.get("OLLAMA_MODEL") or "llama3.2"
+    model = os.environ.get("OLLAMA_MODEL") or "qwen2.5:7b"
     try:
         body = json.dumps({
             "model": model,

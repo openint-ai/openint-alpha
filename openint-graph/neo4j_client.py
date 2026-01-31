@@ -35,14 +35,15 @@ class Neo4jClient:
             uri: Bolt URI (default NEO4J_URI or bolt://localhost:7687)
             user: Username (default NEO4J_USER or neo4j)
             password: Password (default NEO4J_PASSWORD or datahub)
-            database: Database name (default NEO4J_DATABASE or neo4j; use graph.db for DataHub compose)
+            database: Database name (default NEO4J_DATABASE; if unset, uses server default)
         """
         if not NEO4J_AVAILABLE:
             raise ImportError("neo4j driver not available. Install with: pip install neo4j")
         self._uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self._user = user or os.getenv("NEO4J_USER", "neo4j")
         self._password = password or os.getenv("NEO4J_PASSWORD", "datahub")
-        self._database = database or os.getenv("NEO4J_DATABASE", "neo4j")
+        _db = database or os.getenv("NEO4J_DATABASE", "")
+        self._database = _db.strip() if isinstance(_db, str) else None
         self._driver = None
 
     def connect(self) -> None:
@@ -83,11 +84,10 @@ class Neo4jClient:
         """
         self.connect()
         parameters = parameters or {}
-        eager = self._driver.execute_query(
-            cypher,
-            parameters_=parameters,
-            database_=self._database,
-        )
+        kwargs = {"parameters_": parameters}
+        if self._database:
+            kwargs["database_"] = self._database
+        eager = self._driver.execute_query(cypher, **kwargs)
         # EagerResult has .records (list of Record); Record.data() -> dict
         return [rec.data() for rec in eager.records]
 

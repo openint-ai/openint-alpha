@@ -43,12 +43,13 @@ Faker.seed(42)
 np.random.seed(42)
 random.seed(42)
 
-# ID strategy: customer_id = BIGINT (random); transaction_id = UUID; dispute_id = INT (random)
+# ID strategy: customer_id = BIGINT (random); transaction_id = UUID; dispute_id = INT (random or sequential)
 # BIGINT: positive 64-bit (1 to 2^63-1); INT: positive 32-bit (1 to 2^31-1)
 CUSTOMER_ID_MIN = 1
 CUSTOMER_ID_MAX = 2**63 - 1  # BIGINT max
 DISPUTE_ID_MIN = 1
 DISPUTE_ID_MAX = 2**31 - 1   # INT max
+DISPUTE_ID_BASE = 100_000    # Sequential dispute_id start when using append/clean_run
 
 # Global schema (DataHub or openint-datahub/schemas.py); set in main()
 SCHEMA: Dict[str, Dict[str, Any]] = {}
@@ -197,7 +198,7 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
             existing_df = pd.read_csv(customers_path)
             if not existing_df.empty and "customer_id" in existing_df.columns:
                 for v in existing_df["customer_id"].dropna().unique():
-                    vid = _ensure_10_digit_id(v)
+                    vid = _ensure_bigint_id(v)
                     if vid is not None:
                         existing_ids.add(vid)
         except Exception:
@@ -656,7 +657,7 @@ def _generate_dispute_description_via_ollama(
     Returns None on failure (caller should use template fallback).
     """
     host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    model = os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
     ctx_str = ", ".join(f"{k}={v}" for k, v in tx_context.items() if v is not None and str(v).strip())
     prompt = f"""You are helping a banking platform. Generate ONE short, realistic dispute description (1-2 sentences) for a customer disputing a {tx_type} transaction.
 
@@ -755,7 +756,7 @@ def _generate_disputes_for_type(
         return None, dispute_id_start
     # Filter to rows where customer_id exists in customers.csv (if provided)
     if valid_customer_ids is not None:
-        df = df[df["customer_id"].apply(lambda x: _ensure_10_digit_id(x) in valid_customer_ids)]
+        df = df[df["customer_id"].apply(lambda x: _ensure_bigint_id(x) in valid_customer_ids)]
     if df.empty:
         return None, dispute_id_start
     sample = df.sample(n=min(num_disputes, len(df)), replace=False, random_state=42)
@@ -763,7 +764,7 @@ def _generate_disputes_for_type(
     dispute_id = dispute_id_start
     llm_ok = use_llm
     for _, tx in sample.iterrows():
-        cust_id = _ensure_10_digit_id(tx["customer_id"])
+        cust_id = _ensure_bigint_id(tx["customer_id"])
         # transaction_id is GUID (string) from transaction CSV; keep as-is
         txn_id = tx["transaction_id"] if pd.notna(tx["transaction_id"]) else None
         if cust_id is None or txn_id is None or str(txn_id).strip() == "":
@@ -875,13 +876,13 @@ def generate_disputes(num_disputes=5000, batch_size=None, use_llm=True, clean_ru
             df_debit = pd.read_csv(debit_path, usecols=usecols)
             df_atm = df_debit[df_debit["transaction_type"] == "ATM Withdrawal"]
             if valid_customer_ids is not None:
-                df_atm = df_atm[df_atm["customer_id"].apply(lambda x: _ensure_10_digit_id(x) in valid_customer_ids)]
+                df_atm = df_atm[df_atm["customer_id"].apply(lambda x: _ensure_bigint_id(x) in valid_customer_ids)]
             if not df_atm.empty:
                 per_atm = min(per_type, len(df_atm))
                 sample = df_atm.sample(n=per_atm, replace=False, random_state=42)
                 rows = []
                 for _, tx in sample.iterrows():
-                    cust_id = _ensure_10_digit_id(tx["customer_id"])
+                    cust_id = _ensure_bigint_id(tx["customer_id"])
                     txn_id = tx["transaction_id"] if pd.notna(tx["transaction_id"]) else None
                     if cust_id is None or txn_id is None or str(txn_id).strip() == "":
                         continue

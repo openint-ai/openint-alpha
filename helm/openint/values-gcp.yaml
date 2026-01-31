@@ -23,7 +23,7 @@ backend:
     REDIS_HOST: openint-redis
     REDIS_PORT: "6379"
     OLLAMA_HOST: http://openint-ollama:11434
-    OLLAMA_MODEL: llama3.2
+    OLLAMA_MODEL: qwen2.5:7b
     LOG_LEVEL: INFO
 
 ui:
@@ -60,7 +60,7 @@ ollama:
   enabled: true
   image: ollama/ollama
   tag: latest
-  model: llama3.2
+  model: qwen2.5:7b
   resources:
     requests:
       cpu: "1"

@@ -7,6 +7,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { runMultiAgentDemo, getLuckySuggestion, fetchMultiAgentRecentQueries, type MultiAgentDemoResponse, type MultiAgentDemoStep, type MultiAgentHistoryEntry } from '../api';
+import { getModelDisplayName, getModelUrl } from '../utils/modelMeta';
 import { AnswerRenderer } from './AnswerRenderer';
 
 const STAGGER_MS = 380;
@@ -359,7 +360,19 @@ export default function MultiAgentDemo() {
         {luckySource?.llm_model && (
           <p className="text-xs text-gray-500 flex items-center gap-1.5 mt-1" role="status">
             <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-gray-100 text-gray-400" aria-hidden>◇</span>
-            Generated with <span className="font-medium text-gray-600">{luckySource.llm_model}</span>
+            Generated with{' '}
+            {getModelUrl(luckySource.llm_model) ? (
+              <a
+                href={getModelUrl(luckySource.llm_model)!}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-brand-600 hover:underline"
+              >
+                {getModelDisplayName(luckySource.llm_model)}
+              </a>
+            ) : (
+              <span className="font-medium text-gray-600">{getModelDisplayName(luckySource.llm_model)}</span>
+            )}
             {luckySource.sg_agent_time_ms != null && (
               <span
                 className="text-gray-400 font-mono tabular-nums text-[11px]"

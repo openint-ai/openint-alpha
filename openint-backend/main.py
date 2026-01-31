@@ -2012,11 +2012,18 @@ def _sentiment_fallback_local(text: str) -> dict:
 
 
 def _sanitize_sentence_fallback(text: str) -> str:
-    """Light sanitization when sg-agent/Ollama fails: remove profanity, normalize whitespace."""
+    """Light sanitization when sg-agent/Ollama fails: expand abbreviations, remove profanity, normalize whitespace."""
     if not text or not isinstance(text, str):
         return text or ""
     import re
     original = text
+    # Expand abbreviations for semantic search
+    expansions = [
+        (r"\btxns?\b", "transactions", re.IGNORECASE),
+        (r"\bcust\b", "customer", re.IGNORECASE),
+    ]
+    for pat, repl, flags in expansions:
+        text = re.sub(pat, repl, text, flags=flags)
     # Remove common profanity (case-insensitive)
     for word in ("fucking", "fuck", "damn", "shit", "ass", "crap"):
         text = re.sub(rf"\b{re.escape(word)}\b", "", text, flags=re.IGNORECASE)
@@ -2088,11 +2095,13 @@ def multi_agent_demo_run():
                 from a2a import handle_sg_agent_message_send
                 if has_user_sentence:
                     prompt = (
-                        "Edit this user query: fix spelling and grammar, remove profanity, preserve intent. "
-                        "CRITICAL — ID format (never modify or reinterpret): "
-                        "customer_id = BIGINT (e.g. 1026847926404610462), transaction_id = UUID (e.g. 127e9514-be46-4661-9179-bf6896222cbd), dispute_id = INT (e.g. 762938026). "
-                        "Also preserve SSN (XXX-XX-XXXX), phone numbers, and account numbers exactly. "
-                        "Do NOT replace any ID with XXX-XX-XXXX or truncate. Output ONLY the corrected query, nothing else.\n\n"
+                        "Sanitize this user query for semantic search:\n"
+                        "1. Fix spelling and grammar, remove profanity. Preserve the user's intent exactly.\n"
+                        "2. Expand abbreviations: txns→transactions, cust→customer, txn→transaction, etc.\n"
+                        "3. CRITICAL — preserve every ID exactly as written. IDs are: numeric (9–19 digits for customer/dispute), "
+                        "UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx for transaction). Never change, truncate, or substitute any ID.\n"
+                        "4. Do NOT add IDs or entities the user did not mention. If the user asked about customer_id only, output ONLY "
+                        "that—do not add transaction_id or dispute_id. Output a single natural-language query, nothing else.\n\n"
                         "USER QUERY:\n"
                         "---\n"
                         "{}\n"
@@ -2102,8 +2111,8 @@ def multi_agent_demo_run():
                     prompt = (
                         "Generate a single natural-language question that could be asked about a financial or "
                         "banking dataset (e.g. customers, transactions, accounts, disputes). "
-                        "ID format: customer_id BIGINT (e.g. 1026847926404610462), transaction_id UUID (e.g. 127e9514-be46-4661-9179-bf6896222cbd), dispute_id INT (e.g. 762938026). "
-                        "If including example IDs, use these exact formats. Never use prefixes like CUST or TX. Output only the question, nothing else: "
+                        "IDs: numeric (9–19 digits) for customer/dispute, UUID for transaction. Never use prefixes like CUST or TX. "
+                        "Output only the question, nothing else: "
                     )
                 msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": prompt}], "messageId": "multi-demo-1", "kind": "message"}}
                 task_sg = handle_sg_agent_message_send(msg)
@@ -2328,7 +2337,7 @@ Aggregate and summarize the data above. Use the enriched entity details to list 
         import urllib.error
         import ssl
         host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-        model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+        model = os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -2540,7 +2549,7 @@ def _generate_cypher_with_ollama(schema_summary: str, question: str) -> tuple[Op
     import urllib.error
     import ssl
     host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    model = os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
     prompt = f"""You are a Neo4j Cypher expert. Given the schema below and the user question, return ONLY a valid Cypher query. No explanation, no markdown, no code block wrapper.
 
 Schema:
@@ -2597,7 +2606,7 @@ def _analyze_sentiment_with_ollama(text: str) -> tuple[Optional[str], Optional[f
     if not text:
         return (None, None, None, "No text provided")
     host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
-    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    model = os.getenv("OLLAMA_MODEL") or "qwen2.5:7b"
     prompt = f"""Analyze the sentiment of this dispute/customer complaint text. Generate a short descriptive phrase for the sentiment (e.g. "frustrated and anxious", "cautiously optimistic", "very angry", "resigned but hopeful") and a confidence score. Optionally suggest one emoji that fits the sentiment.
 
 Reply with ONLY a single JSON object, no other text. Format:
@@ -3444,7 +3453,7 @@ def graph_query_natural():
         }
         if llm_ms:
             payload["llm_time_ms"] = llm_ms
-        payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
+        payload["llm_model"] = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
         logger.info("graph query-natural: ran Cypher successfully", extra={"rows": len(rows), "llm_ms": llm_ms})
         # Cache question in Redis for reuse (long TTL)
         redis_client = get_redis()
@@ -3536,7 +3545,7 @@ def suggestions_lucky():
         err = result.get("error")
         if err or not sentence:
             logger.warning("sg-agent: lucky suggestion failed", extra={"error": err or "no sentence"})
-            hint = "Start Ollama (ollama serve) and pull a model, e.g. ollama pull llama3.2. Set OLLAMA_HOST if not localhost:11434."
+            hint = "Start Ollama (ollama serve) and pull a model, e.g. ollama pull qwen2.5:7b. Set OLLAMA_HOST if not localhost:11434."
             return jsonify({
                 "success": False,
                 "error": err or "Sentence generation failed. " + hint,
@@ -3550,7 +3559,7 @@ def suggestions_lucky():
             "sg_agent_time_ms": sg_agent_time_ms,
         }
         if source == "ollama":
-            payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
+            payload["llm_model"] = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
         logger.info("sg-agent: lucky suggestion ready", extra={"source": source, "category": result.get("category", "Analyst")})
         # sg-agent + modelmgmt-agent: optionally annotate the sentence (for Compare "I'm feeling lucky")
         if sentence and MULTI_MODEL_AVAILABLE and get_analyzer and request.args.get("annotate", "").lower() in ("1", "true", "yes"):

@@ -6,6 +6,7 @@
 
 import { useState, useCallback } from 'react';
 import { runA2A, type A2ARunResponse, type A2AAnnotationItem } from '../api';
+import { getModelUrl, huggingFaceUrlForId, getModelDisplayName } from '../utils/modelMeta';
 
 type Phase = 'idle' | 'sg-agent' | 'modelmgmt-agent' | 'done' | 'error';
 
@@ -480,8 +481,6 @@ function ExternalLinkIcon({ className }: { className?: string }) {
   );
 }
 
-const HUGGINGFACE_BASE = 'https://huggingface.co/';
-
 /** All 3 model outputs: one card per model with clear name (HF link) and tags. */
 function SemanticAnnotationOutput({ item }: { item: A2AAnnotationItem }) {
   const ann = item.annotation;
@@ -525,8 +524,9 @@ function SemanticAnnotationOutput({ item }: { item: A2AAnnotationItem }) {
           return ka.localeCompare(kb);
         });
         const segments = dedupeSegments(rawSegments);
-        const href = `${HUGGINGFACE_BASE}${encodeURIComponent(id)}`;
+        const href = getModelUrl(id) ?? huggingFaceUrlForId(id) ?? (id.includes('/') ? `https://huggingface.co/${id}` : null);
         const isBest = ann.best_model === id;
+        const modelLabel = getModelDisplayName(id);
 
         return (
           <div
@@ -535,22 +535,33 @@ function SemanticAnnotationOutput({ item }: { item: A2AAnnotationItem }) {
               isBest ? 'border-l-emerald-500 ring-1 ring-emerald-200/60' : 'border-l-emerald-400'
             }`}
           >
-            {/* Model name — prominent, Hugging Face link */}
-            <a
-              href={href}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 hover:text-emerald-700 hover:underline mb-2 group"
-              title={`View on Hugging Face: ${id}`}
-            >
-              <span className="truncate">{id}</span>
-              <ExternalLinkIcon className="w-4 h-4 shrink-0 text-slate-400 group-hover:text-emerald-500" />
-              {isBest && (
-                <span className="shrink-0 text-[10px] font-medium text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
-                  Best
-                </span>
-              )}
-            </a>
+            {/* Model name — prominent, with Hugging Face link when available */}
+            {href ? (
+              <a
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 hover:text-emerald-700 hover:underline mb-2 group"
+                title={`View on Hugging Face: ${modelLabel}`}
+              >
+                <span className="truncate">{modelLabel}</span>
+                <ExternalLinkIcon className="w-4 h-4 shrink-0 text-slate-400 group-hover:text-emerald-500" />
+                {isBest && (
+                  <span className="shrink-0 text-[10px] font-medium text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
+                    Best
+                  </span>
+                )}
+              </a>
+            ) : (
+              <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-800 mb-2">
+                <span className="truncate">{modelLabel}</span>
+                {isBest && (
+                  <span className="shrink-0 text-[10px] font-medium text-emerald-600 bg-emerald-100 px-1.5 py-0.5 rounded">
+                    Best
+                  </span>
+                )}
+              </div>
+            )}
             {/* Tags — full list (deduped) */}
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Tags</p>

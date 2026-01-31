@@ -57,6 +57,20 @@ cd openint-ui
 npm install
 ```
 
+## Optional: Better LLM Results
+
+For more accurate enrichment and A2A (sg-agent, graph-agent, enrich-agent):
+
+```bash
+# Pull recommended model (strong instruction following)
+ollama pull qwen2.5:7b
+
+# Set in .env
+echo "OLLAMA_MODEL=qwen2.5:7b" >> .env
+```
+
+See [MODEL_RECOMMENDATIONS.md](MODEL_RECOMMENDATIONS.md) for finance-specific models and embedding options.
+
 ## Verify Services
 
 ### Check Backend
