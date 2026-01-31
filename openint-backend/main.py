@@ -2088,8 +2088,8 @@ def multi_agent_demo_run():
                 from a2a import handle_sg_agent_message_send
                 if has_user_sentence:
                     prompt = (
-                        "Edit this user query: fix spelling and grammar, remove profanity, preserve intent and all IDs (as 10-digit numbers). "
-                        "CRITICAL: Never modify SSN (format XXX-XX-XXXX), phone/mobile/cell/telephone numbers, account numbers, or any identifiers — preserve them exactly character-for-character. "
+                        "Edit this user query: fix spelling and grammar, remove profanity, preserve intent. "
+                        "CRITICAL: Never modify any 10-digit number, SSN (XXX-XX-XXXX), phone/mobile/cell/telephone, account numbers, or identifiers — preserve them exactly character-for-character. "
                         "You may add a little context for semantic search. Output ONLY the corrected query, nothing else.\n\n"
                         "USER QUERY:\n"
                         "---\n"

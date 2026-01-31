@@ -307,6 +307,40 @@ def _restore_phone_from_original(prompt: str, reply: str) -> str:
     return pat.sub(repl, reply)
 
 
+def _restore_10digit_ids_from_original(prompt: str, reply: str) -> str:
+    """
+    Restore plain 10-digit numbers (customer IDs, transaction IDs, dispute IDs) from original
+    into the LLM reply. The LLM sometimes corrupts them (e.g. 1000003621 -> 100000362 or 1,000,003,621).
+    Preserves the exact original form.
+    """
+    import re
+    if not reply or not prompt:
+        return reply
+    original = _extract_original_from_prompt(prompt)
+    if not original:
+        return reply
+    # Find all 10-digit numbers in original (plain, no SSN/phone - those are handled separately)
+    # Exclude SSN format XXX-XX-XXXX and phone-like patterns
+    plain_10 = re.findall(r"\b\d{10}\b", original)
+    if not plain_10:
+        return reply
+    for orig in plain_10:
+        # Replace corrupted forms in reply with exact original
+        # 1. Missing last digit: 1000003621 -> 100000362
+        reply = re.sub(r"\b" + re.escape(orig[:-1]) + r"\b", orig, reply)
+        # 2. Missing first digit: 1000003621 -> 000003621 (only if orig doesn't start with 0)
+        if orig[0] != "0":
+            reply = re.sub(r"\b" + re.escape(orig[1:]) + r"\b", orig, reply)
+        # 3. Extra trailing digit: 1000003621 -> 10000036210
+        reply = re.sub(r"\b" + re.escape(orig) + r"0\b", orig, reply)
+        # 4. Extra leading zero: 1000003621 -> 01000003621
+        reply = re.sub(r"\b0" + re.escape(orig) + r"\b", orig, reply)
+        # 5. Comma-formatted: 1,000,003,621 -> 1000003621
+        comma_fmt = re.sub(r"(\d)(?=(\d{3})+(?!\d))", r"\1,", orig)
+        reply = reply.replace(comma_fmt, orig)
+    return reply
+
+
 def _sg_agent_fix_or_generate_via_ollama(prompt: str) -> Optional[str]:
     """Call Ollama with the given prompt; return the model reply (single improved/generated sentence) or None."""
     import os
@@ -394,6 +428,7 @@ def handle_sg_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         if reply:
             reply = _restore_ssn_from_original(text, reply)
             reply = _restore_phone_from_original(text, reply)
+            reply = _restore_10digit_ids_from_original(text, reply)
             reply = _normalize_ids_to_10_digits(reply)
             artifacts = [{
                 "artifactId": str(uuid.uuid4()),
