@@ -13,21 +13,21 @@ import yaml
 parent_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(parent_dir))
 
-TESTDATA_DIR = parent_dir / "testdata"
+DATA_DIR = parent_dir / "data"
 PLATFORM = "openint"
 ENVIRONMENT = "PROD"
 
 
 def discover_csv_files() -> List[Dict[str, Any]]:
-    """Discover all CSV files in testdata directory."""
+    """Discover all CSV files in data directory."""
     csv_files = []
     
-    if not TESTDATA_DIR.exists():
-        print(f"❌ Testdata directory not found: {TESTDATA_DIR}")
+    if not DATA_DIR.exists():
+        print(f"❌ Data directory not found: {DATA_DIR}")
         return csv_files
     
-    for csv_path in TESTDATA_DIR.rglob("*.csv"):
-        rel_path = csv_path.relative_to(TESTDATA_DIR)
+    for csv_path in DATA_DIR.rglob("*.csv"):
+        rel_path = csv_path.relative_to(DATA_DIR)
         
         category = "unknown"
         if "dimensions" in str(rel_path):
@@ -114,7 +114,7 @@ def generate_ingestion_config():
         "source": {
             "type": "file",
             "config": {
-                "path": str(TESTDATA_DIR.absolute()),
+                "path": str(DATA_DIR.absolute()),
                 "file_type": "csv",
                 "platform": PLATFORM,
                 "env": ENVIRONMENT,

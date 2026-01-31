@@ -2,7 +2,7 @@
 source:
   type: file
   config:
-    path: testdata
+    path: data
     file_type: csv
     platform: openint
     env: PROD

@@ -2090,6 +2090,7 @@ def multi_agent_demo_run():
                     prompt = (
                         "Edit this user query: fix spelling and grammar, remove profanity, preserve intent. "
                         "CRITICAL: Never modify any 10-digit number, SSN (XXX-XX-XXXX), phone/mobile/cell/telephone, account numbers, or identifiers — preserve them exactly character-for-character. "
+                        "A 10-digit number like 1000007542 is a customer ID, transaction ID, or dispute ID — do NOT replace it with XXX-XX-XXXX or any placeholder; keep the digits as-is. "
                         "You may add a little context for semantic search. Output ONLY the corrected query, nothing else.\n\n"
                         "USER QUERY:\n"
                         "---\n"
@@ -2950,7 +2951,7 @@ def graph_enrich():
             "label": None,
             "id": node_id,
             "properties": {},
-            "error": f"No node found for id {node_id!r}. Ensure Neo4j is running and data is loaded (python -m openint_testdata.loaders.load_openint_data_to_neo4j).",
+            "error": f"No node found for id {node_id!r}. Ensure Neo4j is running and data is loaded (python openint-testdata/loaders/load_openint_data_to_neo4j.py).",
         }), 200
     except Exception as e:
         get_logger(__name__).warning("graph enrich failed", extra={"id": node_id, "error": str(e)})

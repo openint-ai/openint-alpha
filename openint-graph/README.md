@@ -30,7 +30,7 @@ Ensure the agent/backend process can reach Neo4j (localhost:7687 when using Dock
 
 ## Loading data
 
-From the repo root (or `openint-testdata/loaders`), after generating test data:
+From the repo root (or `openint-testdata/loaders`), after generating data:
 
 ```bash
 # Install neo4j driver if needed: pip install neo4j

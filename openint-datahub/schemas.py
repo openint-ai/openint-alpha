@@ -1,5 +1,5 @@
 """
-Schema definitions for openInt testdata datasets.
+Schema definitions for openInt data datasets.
 These schemas define the structure of each dataset for DataHub metadata ingestion.
 """
 

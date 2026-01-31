@@ -80,7 +80,7 @@ def main():
         print(f"\n  3. Entity count: {count:,}")
         if count == 0:
             print("     Collection is empty. Run the loader:")
-            print("       cd openint-testdata && python generators/generate_openint_test_data.py")
+            print("       cd openint-testdata && python generators/generate_openint_test_data.py  # writes to openint-testdata/data/")
             print("       python loaders/load_openint_data_to_milvus.py")
     except Exception as e:
         print(f"\n  3. Entity count: FAILED - {e}")

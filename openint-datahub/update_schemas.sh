@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Driver script to update all openInt testdata table schemas in DataHub
+# Driver script to update all openInt data table schemas in DataHub
 # Pushes metadata for all datasets (dimensions, facts, static tables)
 
 set -e
@@ -43,20 +43,20 @@ else
 fi
 echo ""
 
-# Check if testdata directory exists
-TESTDATA_DIR="../testdata"
-if [ ! -d "$TESTDATA_DIR" ]; then
-    echo -e "${RED}❌ Testdata directory not found: $TESTDATA_DIR${NC}"
-    echo -e "${YELLOW}💡 Please ensure testdata exists before running schema update${NC}"
+# Check if data directory exists
+DATA_DIR="../data"
+if [ ! -d "$DATA_DIR" ]; then
+    echo -e "${RED}❌ Data directory not found: $DATA_DIR${NC}"
+    echo -e "${YELLOW}💡 Please ensure data exists before running schema update${NC}"
     exit 1
 fi
 
 # Check if required CSV files exist
-echo -e "${BLUE}📋 Checking testdata files...${NC}"
+echo -e "${BLUE}📋 Checking data files...${NC}"
 missing_files=0
 
 # Check dimension tables
-if [ ! -f "$TESTDATA_DIR/dimensions/customers.csv" ]; then
+if [ ! -f "$DATA_DIR/dimensions/customers.csv" ]; then
     echo -e "${YELLOW}⚠️  Missing: dimensions/customers.csv${NC}"
     missing_files=$((missing_files + 1))
 fi
@@ -64,7 +64,7 @@ fi
 # Check fact tables
 fact_tables=("ach_transactions" "wire_transactions" "credit_transactions" "debit_transactions" "check_transactions" "disputes")
 for table in "${fact_tables[@]}"; do
-    if [ ! -f "$TESTDATA_DIR/facts/${table}.csv" ]; then
+    if [ ! -f "$DATA_DIR/facts/${table}.csv" ]; then
         echo -e "${YELLOW}⚠️  Missing: facts/${table}.csv${NC}"
         missing_files=$((missing_files + 1))
     fi
@@ -178,7 +178,7 @@ else
     echo -e "${YELLOW}💡 Troubleshooting:${NC}"
     echo -e "   1. Ensure DataHub is running: curl ${DATAHUB_GMS_URL}/health"
     echo -e "   2. Check DataHub logs for errors"
-    echo -e "   3. Verify testdata files exist"
+    echo -e "   3. Verify data files exist"
     echo ""
     exit 1
 fi

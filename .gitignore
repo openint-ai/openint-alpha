@@ -47,7 +47,7 @@ openint-backend/backend.log
 openint-agents/agents.log
 openint-ui/ui.log
 .DS_Store
-testdata/
+data/
 *.pid
 .archive/
 .env

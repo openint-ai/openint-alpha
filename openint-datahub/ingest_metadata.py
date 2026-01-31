@@ -1,5 +1,5 @@
 """
-DataHub metadata ingestion script for openInt testdata.
+DataHub metadata ingestion script for openInt data.
 Automatically discovers CSV files and creates DataHub datasets from their headers.
 
 Note: If you get authentication errors, you can either:
@@ -70,7 +70,7 @@ if not DATAHUB_TOKEN:
 
 PLATFORM = "openint"
 ENVIRONMENT = "PROD"
-TESTDATA_DIR = parent_dir / "testdata"
+DATA_DIR = parent_dir / "data"
 
 # Global emitter instance (will be created in main)
 _rest_emitter = None
@@ -185,19 +185,19 @@ def _emit_via_graphql(mcp: MetadataChangeProposalWrapper, graph: DataHubGraph) -
 
 def discover_csv_files() -> List[Dict[str, Any]]:
     """
-    Discover all CSV files in testdata directory structure.
+    Discover all CSV files in data directory structure.
     Returns list of dicts with: name, path, category
     """
     csv_files = []
     
-    if not TESTDATA_DIR.exists():
-        print(f"❌ Testdata directory not found: {TESTDATA_DIR}")
+    if not DATA_DIR.exists():
+        print(f"❌ Data directory not found: {DATA_DIR}")
         return csv_files
     
-    # Walk through testdata directory
-    for csv_path in TESTDATA_DIR.rglob("*.csv"):
-        # Get relative path from testdata directory
-        rel_path = csv_path.relative_to(TESTDATA_DIR)
+    # Walk through data directory
+    for csv_path in DATA_DIR.rglob("*.csv"):
+        # Get relative path from data directory
+        rel_path = csv_path.relative_to(DATA_DIR)
         
         # Determine category from directory structure
         category = "unknown"
@@ -463,7 +463,7 @@ def ingest_dataset_from_schema(
 ) -> bool:
     """
     Ingest metadata for a dataset from schema definition (schemas.py).
-    Used when testdata/ is not present (e.g. fresh clone); loads only schemas.
+    Used when data/ is not present (e.g. fresh clone); loads only schemas.
     """
     global _rest_emitter
     try:
@@ -593,12 +593,12 @@ def ingest_dataset_from_schema(
 def main():
     """Main function to ingest all CSV files or schema definitions as DataHub datasets"""
     print("=" * 80)
-    print("📊 DataHub Metadata Ingestion for openInt Testdata")
+    print("📊 DataHub Metadata Ingestion for openInt Data")
     print("=" * 80)
     print(f"\n🔗 DataHub GMS URL: {DATAHUB_GMS_URL}")
     print(f"📦 Platform: {PLATFORM}")
     print(f"🌍 Environment: {ENVIRONMENT}")
-    print(f"📁 Testdata Directory: {TESTDATA_DIR}\n")
+    print(f"📁 Data Directory: {DATA_DIR}\n")
 
     csv_files = discover_csv_files()
 
@@ -653,12 +653,12 @@ def main():
                 else:
                     total_failed += 1
     else:
-        # No testdata/ or no CSVs: load only schemas from schemas.py (repo-friendly)
+        # No data/ or no CSVs: load only schemas from schemas.py (repo-friendly)
         schemas = get_dataset_schemas()
         if not schemas:
-            print("❌ No CSV files in testdata/ and no schemas in schemas.py")
+            print("❌ No CSV files in data/ and no schemas in schemas.py")
             return
-        print("📋 No testdata CSVs found; ingesting from schemas.py (schema-only)\n")
+        print("📋 No data CSVs found; ingesting from schemas.py (schema-only)\n")
         for name, schema_def in sorted(schemas.items()):
             print(f"   • {schema_def.get('category', 'unknown'):10s} - {name}")
         total_count = len(schemas)

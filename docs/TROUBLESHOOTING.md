@@ -137,8 +137,8 @@ python openint-vectordb/check_milvus.py
 ```
 This checks connection, entity count, and search.
 
-### 2. Verify loader found testdata
-The loader looks for `openint-testdata/testdata/`. Generate data first:
+### 2. Verify loader found data
+The loader looks for `openint-testdata/data/`. Generate data first:
 ```bash
 cd openint-testdata
 python generators/generate_openint_test_data.py

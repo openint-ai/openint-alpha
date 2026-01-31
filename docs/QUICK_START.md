@@ -106,6 +106,6 @@ lsof -ti:3000 | xargs kill -9
 
 ## Next Steps
 
-1. Generate test data: `cd openint-testdata && python generators/generate_openint_test_data.py --quick`
+1. Generate data: `cd openint-testdata && python generators/generate_openint_test_data.py --quick` (output: openint-testdata/data/)
 2. Load data: `python loaders/load_openint_data_to_milvus.py`
 3. Start using the UI!

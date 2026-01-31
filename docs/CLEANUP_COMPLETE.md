@@ -47,7 +47,7 @@
 - ✅ `openint-testdata/` - Test Data Generation
 - ✅ `openint-ui/` - Frontend
 - ✅ `shared/` - Shared Utilities
-- ✅ `testdata/` - Test Data
+- ✅ `data/` - Generated Data
 
 ### Essential Files
 - ✅ `openint-vectordb/milvus/milvus_client.py` - Used by agents and testdata loaders
@@ -81,7 +81,7 @@ openint-alpha/
 ├── openint-testdata/     # Test Data Generation
 ├── openint-ui/           # Frontend
 ├── shared/               # Shared Utilities
-├── testdata/             # Test Data
+├── data/                 # Generated Data
 ├── samples/              # Sample Files
 ├── .archive/             # Archived Documentation
 ├── .agents/              # Pinecone Docs

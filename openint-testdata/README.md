@@ -40,13 +40,13 @@ python generators/generate_openint_test_data.py --only-static
 
 Disputes are created **only** from existing transaction data: each dispute references a valid `customer_id` and `transaction_id` (both 10-digit) from the respective transaction CSVs. Output files mirror transaction types: `ach_disputes.csv`, `credit_disputes.csv`, `debit_disputes.csv`, `wire_disputes.csv`, `check_disputes.csv`, `atm_disputes.csv`.
 
-**Output directory:** Data is always written to `openint-testdata/testdata/` (regardless of CWD).
+**Output directory:** Data is always written to `openint-testdata/data/` (regardless of CWD).
 
 **Append vs overwrite:** By default, new records are appended to existing files. Use `--clean-run` to overwrite instead.
 
 ### Load Data into Neo4j
 
-From repo root (with `testdata/` containing `dimensions/` and `facts/` from the generator):
+From repo root (with `data/` containing `dimensions/` and `facts/` from the generator):
 
 ```bash
 # Full load: transactions + disputes + customer enrichment (Customer nodes get full details)
@@ -57,7 +57,7 @@ python openint-testdata/loaders/load_openint_data_to_neo4j.py
 python openint-testdata/loaders/load_openint_data_to_neo4j.py --only-enrich
 ```
 
-Ensure `testdata/dimensions/customers.csv` and `testdata/facts/*.csv` exist (run the generator first).
+Ensure `data/dimensions/customers.csv` and `data/facts/*.csv` exist (run the generator first).
 
 ### Load Data into Milvus
 

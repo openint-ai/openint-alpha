@@ -2,6 +2,12 @@
 Load openInt Test Data into Milvus Vector Database
 Converts structured CSV data into searchable vector embeddings.
 
+Load order (aligned with Neo4j loader load_openint_data_to_neo4j.py):
+  (1) Transactions first (all fact tables: ach, wire, credit, debit, check)
+  (2) Disputes (type-specific: ach_disputes, credit_disputes, etc.)
+  (3) Customers last, only for customer_ids that appear in transactions + disputes
+This avoids loading the full customers dimension; only customers with facts get loaded.
+
 ID handling: Entity IDs (customer_id, transaction_id, dispute_id) are normalized
 via _normalize_id_for_vector() for consistency with Neo4j:
 - record_id, file_name, Structured Data JSON, and row_to_text (searchable content)
@@ -58,19 +64,18 @@ def _default_batch_size() -> int:
 
 
 # Data directories: resolve relative to project (repo) root
-# testdata: generator writes to openint-testdata/testdata; loaders also check repo_root/testdata
+# data: generator writes to openint-testdata/data; loaders also check repo_root/data
 _LOADER_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _LOADER_DIR.parent.parent  # openint-testdata -> repo root
-_TESTDATA_ROOT = _LOADER_DIR.parent  # openint-testdata
+_DATA_ROOT = _LOADER_DIR.parent  # openint-testdata
 _BASE_CANDIDATES = [
-    _REPO_ROOT / "testdata",           # Primary: repo root / testdata
-    _TESTDATA_ROOT / "testdata",       # Generator output: openint-testdata/testdata
-    Path("testdata"),                  # CWD-relative
+    _REPO_ROOT / "data",               # Primary: repo root / data
+    _DATA_ROOT / "data",               # Generator output: openint-testdata/data
+    Path("data"),                      # CWD-relative
 ]
-BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _TESTDATA_ROOT / "testdata")
+BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _DATA_ROOT / "data")
 DIMENSIONS_DIR = BASE_DIR / "dimensions"
 FACTS_DIR = BASE_DIR / "facts"
-STATIC_DIR = BASE_DIR / "static"
 
 
 def _normalize_id_for_vector(val: Any) -> str:
@@ -92,6 +97,62 @@ def _normalize_id_for_vector(val: Any) -> str:
 
 # ID columns: normalize to avoid 1000003621.0 vs 1000003621 mismatch with Neo4j
 _ID_COLUMNS = frozenset(("customer_id", "transaction_id", "dispute_id"))
+
+# File layout: aligned with Neo4j loader
+_TX_FILES = [
+    "ach_transactions.csv", "wire_transactions.csv", "credit_transactions.csv",
+    "debit_transactions.csv", "check_transactions.csv",
+]
+_DISPUTE_FILES = [
+    "ach_disputes.csv", "credit_disputes.csv", "debit_disputes.csv",
+    "wire_disputes.csv", "check_disputes.csv", "atm_disputes.csv",
+]
+
+
+def _to_id_str(val: Any) -> str:
+    """Normalize ID for comparison: same logic as Neo4j _to_id_str."""
+    if pd.isna(val) or val is None:
+        return ""
+    return _normalize_id_for_vector(val)
+
+
+def collect_customer_ids_from_facts(
+    facts_dir: Path,
+    max_transactions: Optional[int],
+    max_disputes: Optional[int],
+) -> set:
+    """Scan transaction and dispute CSVs and return the set of customer_ids (normalized strings).
+    Aligned with Neo4j loader - same logic for consistency."""
+    seen: set = set()
+    for fname in _TX_FILES:
+        csv_path = facts_dir / fname
+        if not csv_path.exists():
+            continue
+        try:
+            df = pd.read_csv(csv_path, usecols=["customer_id"])
+            if max_transactions:
+                df = df.head(max_transactions)
+            for v in df["customer_id"].dropna().unique():
+                s = _to_id_str(v)
+                if s:
+                    seen.add(s)
+        except Exception:
+            pass
+    for fname in _DISPUTE_FILES:
+        csv_path = facts_dir / fname
+        if not csv_path.exists():
+            continue
+        try:
+            df = pd.read_csv(csv_path, usecols=["customer_id"])
+            if max_disputes:
+                df = df.head(max_disputes)
+            for v in df["customer_id"].dropna().unique():
+                s = _to_id_str(v)
+                if s:
+                    seen.add(s)
+        except Exception:
+            pass
+    return seen
 
 
 def row_to_text(row: pd.Series, table_name: str, csv_columns: List[str]) -> str:
@@ -185,7 +246,8 @@ def load_csv_to_milvus(
     table_name: str,
     client: MilvusClient,
     batch_size: int = 1_000,
-    max_records: Optional[int] = None
+    max_records: Optional[int] = None,
+    allowed_customer_ids: Optional[set] = None,
 ):
     """
     Load a CSV file into Milvus.
@@ -196,6 +258,7 @@ def load_csv_to_milvus(
         client: MilvusClient instance
         batch_size: Number of records per batch
         max_records: Maximum number of records to load (None for all)
+        allowed_customer_ids: When loading customers, only load rows with customer_id in this set (aligned with Neo4j)
         
     Returns:
         dict with loading statistics
@@ -238,6 +301,12 @@ def load_csv_to_milvus(
             chunk_df = chunk_df[csv_columns]
             if max_records and total_loaded >= max_records:
                 break
+            
+            # Filter to allowed_customer_ids when loading customers (aligned with Neo4j)
+            if table_name == "customers" and allowed_customer_ids is not None and "customer_id" in chunk_df.columns:
+                chunk_df = chunk_df[chunk_df["customer_id"].apply(lambda v: _to_id_str(v) in allowed_customer_ids)]
+                if chunk_df.empty:
+                    continue
             
             chunk_num += 1
             
@@ -377,7 +446,7 @@ Examples:
   python load_openInt_data_to_milvus.py --only-customers
   python load_openInt_data_to_milvus.py --only-transactions
   python load_openInt_data_to_milvus.py --only-disputes
-  python load_openInt_data_to_milvus.py --only-static
+  python load_openInt_data_to_milvus.py --only-disputes
 
   # Load only first 10,000 customers, 100,000 transactions, 5,000 disputes (for testing)
   python load_openInt_data_to_milvus.py --max-customers 10000 --max-transactions 100000 --max-disputes 5000
@@ -417,28 +486,23 @@ Examples:
     parser.add_argument(
         "--skip-dimensions",
         action="store_true",
-        help="Skip loading dimension tables (customers, static tables)"
+        help="Skip loading dimension tables (customers)"
     )
     only_group = parser.add_mutually_exclusive_group()
     only_group.add_argument(
         "--only-customers",
         action="store_true",
-        help="Load only customers (dimensions/customers.csv); skip transactions, disputes, and static"
+        help="Load only customers (dimensions/customers.csv); skip transactions and disputes"
     )
     only_group.add_argument(
         "--only-transactions",
         action="store_true",
-        help="Load only transaction fact tables (ACH, wire, credit, debit, check); skip customers, disputes, and static"
+        help="Load only transaction fact tables (ACH, wire, credit, debit, check); skip customers and disputes"
     )
     only_group.add_argument(
         "--only-disputes",
         action="store_true",
-        help="Load only disputes fact table (facts/disputes.csv); skip customers, transactions, and static"
-    )
-    only_group.add_argument(
-        "--only-static",
-        action="store_true",
-        help="Load only static dimension tables (country_codes, state_codes, zip_codes); skip customers, transactions, and disputes"
+        help="Load only disputes fact table; skip customers and transactions"
     )
     default_batch = _default_batch_size()
     parser.add_argument(
@@ -477,25 +541,22 @@ Examples:
 
     # --only-*: load exactly one category; otherwise use skip flags
     load_customers = args.only_customers or (
-        not args.skip_dimensions and not args.only_transactions and not args.only_disputes and not args.only_static
-    )
-    load_static = args.only_static or (
-        not args.skip_dimensions and not args.only_customers and not args.only_transactions and not args.only_disputes
+        not args.skip_dimensions and not args.only_transactions and not args.only_disputes
     )
     load_transactions = args.only_transactions or (
-        not args.skip_transactions and not args.only_customers and not args.only_disputes and not args.only_static
+        not args.skip_transactions and not args.only_customers and not args.only_disputes
     )
     load_disputes = args.only_disputes or (
-        not args.skip_disputes and not args.only_customers and not args.only_transactions and not args.only_static
+        not args.skip_disputes and not args.only_customers and not args.only_transactions
     )
 
     print("=" * 80)
     print("🏦 Loading openInt Test Data into Milvus")
     print("=" * 80)
 
-    # Check if testdata directory exists
+    # Check if data directory exists
     if not BASE_DIR.exists():
-        print(f"\n❌ Test data directory not found: {BASE_DIR}")
+        print(f"\n❌ Data directory not found: {BASE_DIR}")
         print(f"\n💡 Please generate test data first by running:")
         print(f"   python generate_openInt_test_data.py")
         return
@@ -525,8 +586,6 @@ Examples:
         print(f"   📌 Loading only: transactions")
     elif args.only_disputes:
         print(f"   📌 Loading only: disputes")
-    elif args.only_static:
-        print(f"   📌 Loading only: static (country, state, zip)")
     else:
         if args.skip_transactions:
             print(f"   ⚠️  Skipping transaction tables")
@@ -555,51 +614,18 @@ Examples:
             return
         print(f"   Deleted {clean_result.get('deleted_count', 0):,} record(s)\n")
 
+    # Collect customer_ids from transactions + disputes up front (same as Neo4j: enrich only those)
+    allowed_customer_ids: Optional[set] = None
+    if load_customers and not args.only_customers and (load_transactions or load_disputes) and FACTS_DIR.exists():
+        max_tx = args.max_transactions if load_transactions else None
+        max_disp = args.max_disputes if load_disputes else None
+        allowed_customer_ids = collect_customer_ids_from_facts(FACTS_DIR, max_tx, max_disp)
+        if allowed_customer_ids:
+            print(f"\n📋 From transactions + disputes CSVs: {len(allowed_customer_ids):,} distinct customer_ids (will load only these customers)")
+
     results = []
 
-    # Load customers only
-    if load_customers:
-        print("\n" + "=" * 80)
-        print("📊 Loading Customers")
-        print("=" * 80)
-        customers_file = DIMENSIONS_DIR / "customers.csv"
-        if customers_file.exists():
-            result = load_csv_to_milvus(
-                customers_file,
-                "customers",
-                client,
-                batch_size=args.batch_size,
-                max_records=args.max_customers
-            )
-            results.append(result)
-        else:
-            print(f"⚠️  Customers file not found: {customers_file}")
-
-    # Load static dimension tables only (country, state, zip)
-    if load_static:
-        print("\n" + "=" * 80)
-        print("📋 Loading Static Dimension Tables")
-        print("=" * 80)
-        static_tables = [
-            ("country_codes.csv", "country_codes"),
-            ("state_codes.csv", "state_codes"),
-            ("zip_codes.csv", "zip_codes"),
-        ]
-        for filename, table_name in static_tables:
-            file_path = STATIC_DIR / filename
-            if file_path.exists():
-                result = load_csv_to_milvus(
-                    file_path,
-                    table_name,
-                    client,
-                    batch_size=args.batch_size
-                )
-                results.append(result)
-            else:
-                print(f"⚠️  File not found: {file_path}")
-                print(f"   💡 Run 'python generate_openInt_test_data.py' to generate test data")
-
-    # Load fact tables (transaction data)
+    # (1) Transactions first (same order as Neo4j)
     if load_transactions:
         print("\n" + "=" * 80)
         print("💳 Loading Transaction Fact Tables")
@@ -617,18 +643,18 @@ Examples:
             file_path = FACTS_DIR / filename
             if file_path.exists():
                 result = load_csv_to_milvus(
-                    file_path, 
-                    table_name, 
-                    client, 
+                    file_path,
+                    table_name,
+                    client,
                     batch_size=args.batch_size,
-                    max_records=args.max_transactions
+                    max_records=args.max_transactions,
                 )
                 results.append(result)
             else:
                 print(f"⚠️  File not found: {file_path}")
-                print(f"   💡 Run 'python generate_openInt_test_data.py' to generate test data")
+                print(f"   💡 Run 'python generate_openint_test_data.py' to generate test data")
 
-    # Load disputes (type-specific: ach_disputes.csv, credit_disputes.csv, etc.)
+    # (2) Disputes (type-specific: ach_disputes, credit_disputes, etc.)
     if load_disputes:
         print("\n" + "=" * 80)
         print("📋 Loading Disputes")
@@ -652,12 +678,31 @@ Examples:
                     table_name,
                     client,
                     batch_size=args.batch_size,
-                    max_records=max_per_file
+                    max_records=max_per_file,
                 )
                 results.append(result)
         if not any_found:
             print(f"⚠️  No dispute files found in {FACTS_DIR}")
             print(f"   💡 Run 'python generate_openint_test_data.py' to generate disputes (requires transaction fact tables)")
+
+    # (3) Customers last: only those that appear in facts (same strategy as Neo4j enrich)
+    if load_customers:
+        print("\n" + "=" * 80)
+        print("📊 Loading Customers")
+        print("=" * 80)
+        customers_file = DIMENSIONS_DIR / "customers.csv"
+        if customers_file.exists():
+            result = load_csv_to_milvus(
+                customers_file,
+                "customers",
+                client,
+                batch_size=args.batch_size,
+                max_records=args.max_customers,
+                allowed_customer_ids=allowed_customer_ids,
+            )
+            results.append(result)
+        else:
+            print(f"⚠️  Customers file not found: {customers_file}")
 
     # Ensure collection is loaded into memory for immediate searchability
     total_loaded = sum(r.get("total_loaded", 0) for r in results if r.get("success"))

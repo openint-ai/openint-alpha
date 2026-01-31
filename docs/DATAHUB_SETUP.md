@@ -181,7 +181,7 @@ If health checks fail:
 
 After DataHub is running:
 
-1. **Ingest testdata metadata**:
+1. **Ingest data metadata**:
    ```bash
    cd openint-datahub
    python ingest_metadata.py

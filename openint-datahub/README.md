@@ -1,12 +1,12 @@
 # openInt DataHub Integration
 
-This project integrates openInt testdata models with DataHub, an open-source metadata platform for data discovery, observability, and governance.
+This project integrates openInt data models with DataHub, an open-source metadata platform for data discovery, observability, and governance.
 
-**Repo-friendly:** The `testdata/` directory is gitignored. If `testdata/` is absent (e.g. fresh clone), `ingest_metadata.py` loads **only schemas** from `schemas.py` and pushes dataset metadata to DataHub. When `testdata/` exists with CSVs, ingestion uses CSV headers (or schemas) as usual.
+**Repo-friendly:** The `data/` directory is gitignored. If `data/` is absent (e.g. fresh clone), `ingest_metadata.py` loads **only schemas** from `schemas.py` and pushes dataset metadata to DataHub. When `data/` exists with CSVs, ingestion uses CSV headers (or schemas) as usual.
 
 ## Overview
 
-The `openint-datahub` project pushes metadata about all openInt testdata datasets to your DataHub instance, including:
+The `openint-datahub` project pushes metadata about all openInt data datasets to your DataHub instance, including:
 
 - **Dimension Tables**: customers
 - **Fact Tables**: ach_transactions, wire_transactions, credit_transactions, debit_transactions, check_transactions, disputes
@@ -168,7 +168,7 @@ For each dataset, the script pushes:
 
 After ingestion, openint datasets appear:
 
-- **Homepage / default view**: Use **Search** or **Browse** from the top nav. The default Browse tree shows **Datasets → PROD → openint**; expand **openint** then **dimension**, **fact**, or **static** to see each dataset (one per testdata file).
+- **Homepage / default view**: Use **Search** or **Browse** from the top nav. The default Browse tree shows **Datasets → PROD → openint**; expand **openint** then **dimension**, **fact**, or **static** to see each dataset (one per data file).
 - **Search**: You can still filter by `platform:openint` or search by dataset name (e.g. `customers`, `credit_transactions`).
 
 ## Dataset Schemas
@@ -265,8 +265,8 @@ If you see connection errors:
 
 If schema ingestion fails:
 
-1. **Schema-only mode:** If `testdata/` is absent, ingestion uses `schemas.py` only; ensure `schemas.py` defines all datasets you need.
-2. **CSV mode:** If using CSVs, check that files exist in `../testdata/` and headers match definitions in `schemas.py`.
+1. **Schema-only mode:** If `data/` is absent, ingestion uses `schemas.py` only; ensure `schemas.py` defines all datasets you need.
+2. **CSV mode:** If using CSVs, check that files exist in `../data/` and headers match definitions in `schemas.py`.
 3. Check DataHub logs for detailed error messages.
 
 ## Customization

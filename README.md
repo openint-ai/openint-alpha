@@ -45,7 +45,7 @@ openint-alpha/
 ├── openint-mcp/          # MCP Server
 ├── shared/               # Shared Utilities & Contracts
 ├── samples/              # Sample files
-└── testdata/             # Generated Test Data (gitignored; generate via openint-testdata)
+└── data/                 # Generated Data (gitignored; generate via openint-testdata)
 ```
 
 ## 🎯 Features
@@ -93,7 +93,7 @@ cd openint-ui && npm run dev
 # Start DataHub services
 docker-compose -f docker-compose.datahub.yml up -d
 
-# Ingest testdata metadata
+# Ingest data metadata
 cd openint-datahub
 python ingest_metadata.py
 

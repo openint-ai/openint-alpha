@@ -310,8 +310,8 @@ def _restore_phone_from_original(prompt: str, reply: str) -> str:
 def _restore_10digit_ids_from_original(prompt: str, reply: str) -> str:
     """
     Restore plain 10-digit numbers (customer IDs, transaction IDs, dispute IDs) from original
-    into the LLM reply. The LLM sometimes corrupts them (e.g. 1000003621 -> 100000362 or 1,000,003,621).
-    Preserves the exact original form.
+    into the LLM reply. The LLM sometimes corrupts them (e.g. 1000003621 -> 100000362 or 1,000,003,621),
+    or wrongly replaces them with SSN placeholder (XXX-XX-XXXX). Preserves the exact original form.
     """
     import re
     if not reply or not prompt:
@@ -324,6 +324,12 @@ def _restore_10digit_ids_from_original(prompt: str, reply: str) -> str:
     plain_10 = re.findall(r"\b\d{10}\b", original)
     if not plain_10:
         return reply
+    # If LLM wrongly turned a customer/transaction/dispute ID into SSN placeholder, restore it
+    # Only when original has no real SSN (XXX-XX-XXXX), so we don't overwrite real SSN restoration
+    has_ssn_in_original = bool(re.search(r"\d{3}-\d{2}-\d{4}", original))
+    ssn_placeholder = re.compile(r"XXX-XX-XXXX", re.IGNORECASE)
+    if not has_ssn_in_original and ssn_placeholder.search(reply):
+        reply = ssn_placeholder.sub(plain_10[0], reply, count=1)
     for orig in plain_10:
         # Replace corrupted forms in reply with exact original
         # 1. Missing last digit: 1000003621 -> 100000362

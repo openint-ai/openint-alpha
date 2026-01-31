@@ -42,14 +42,14 @@ try:
 except ImportError:
     get_dataset_schemas = None
 
-# Data directories (aligned with Milvus loader: generator writes to openint-testdata/testdata)
-_testdata_root = Path(__file__).resolve().parent.parent  # openint-testdata
+# Data directories (aligned with Milvus loader: generator writes to openint-testdata/data)
+_data_root = Path(__file__).resolve().parent.parent  # openint-testdata
 _BASE_CANDIDATES = [
-    _repo_root / "testdata",
-    _testdata_root / "testdata",  # Generator output: openint-testdata/testdata
-    Path("testdata"),
+    _repo_root / "data",
+    _data_root / "data",  # Generator output: openint-testdata/data
+    Path("data"),
 ]
-BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _testdata_root / "testdata")
+BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _data_root / "data")
 DIMENSIONS_DIR = BASE_DIR / "dimensions"
 FACTS_DIR = BASE_DIR / "facts"
 
@@ -391,7 +391,7 @@ def main():
         description="Load openInt test data into Neo4j (schema-driven from DataHub schema)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--data-dir", type=Path, default=None, help="Test data root (default: testdata or repo testdata)")
+    parser.add_argument("--data-dir", type=Path, default=None, help="Data root (default: data or repo data)")
     parser.add_argument("--max-customers", type=int, default=None, help="Max customer records")
     parser.add_argument("--max-transactions", type=int, default=None, help="Max transaction records per table")
     parser.add_argument("--max-disputes", type=int, default=None, help="Max dispute records")
@@ -492,7 +492,7 @@ def main():
             if allowed_customer_ids:
                 print(f"📋 From Neo4j Customer nodes: {len(allowed_customer_ids):,} distinct customer ids to enrich")
             else:
-                print("⚠️ No customer_ids from CSVs or graph. Ensure testdata/facts/*.csv exist or load transactions/disputes first.")
+                print("⚠️ No customer_ids from CSVs or graph. Ensure data/facts/*.csv exist or load transactions/disputes first.")
 
     # (1) Transactions first: create minimal Customer + Transaction + HAS_TRANSACTION
     if load_tx:

@@ -5,8 +5,15 @@ Generates realistic openInt test data including:
 - Transaction fact tables (ACH, Wire, Credit, Debit, Check) for those customers only
 - Static dimension tables (country codes, state codes, zip codes)
 - Disputes by type: ach_disputes.csv, credit_disputes.csv, debit_disputes.csv,
-  wire_disputes.csv, check_disputes.csv, atm_disputes.csv (customer_id and
-  transaction_id both 10-digit, referencing respective transaction CSVs)
+  wire_disputes.csv, check_disputes.csv, atm_disputes.csv
+
+ID strategy (banking-critical):
+- customer_id: 10-digit numbers only; no duplication in customers.csv (unique per file).
+- transaction_id: GUID (UUID v4) per transaction.
+- dispute_id: start at 100,000 (100K) and monotonically increasing.
+
+Schema: Connects to DataHub API to fetch table schema when available; otherwise uses
+openint-datahub/schemas.py. Generated CSVs follow schema field order and types.
 """
 
 import json
@@ -16,6 +23,7 @@ import ssl
 import argparse
 import urllib.request
 import urllib.error
+import uuid
 import pandas as pd
 import numpy as np
 from faker import Faker
@@ -30,16 +38,19 @@ Faker.seed(42)
 np.random.seed(42)
 random.seed(42)
 
-# ID bases: all IDs are 10-digit numeric unique identifiers (1_000_000_000 + offset)
-ID_BASE_10_DIGIT = 1_000_000_000  # 10 digits: 1000000000, 1000000001, ...
-CUSTOMER_ID_BASE = ID_BASE_10_DIGIT
-TRANSACTION_ID_BASE = ID_BASE_10_DIGIT
-DISPUTE_ID_BASE = ID_BASE_10_DIGIT
+# ID strategy: customer_id = 10-digit unique; transaction_id = GUID; dispute_id = 100K+
+CUSTOMER_ID_MIN = 1_000_000_000  # 10-digit range
+CUSTOMER_ID_MAX = 9_999_999_999
+DISPUTE_ID_BASE = 100_000  # Disputes start at 100K and increase monotonically
 
-# Data directories: always under openint-testdata/testdata (consistent regardless of CWD)
+# Global schema (DataHub or openint-datahub/schemas.py); set in main()
+SCHEMA: Dict[str, Dict[str, Any]] = {}
+
+# Data directories: output to project root data/ (repo_root/data)
 _SCRIPT_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _SCRIPT_DIR.parent  # openint-testdata
-BASE_DIR = _PROJECT_ROOT / "testdata"
+_REPO_ROOT = _PROJECT_ROOT.parent   # repo root
+BASE_DIR = _REPO_ROOT / "data"
 BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Subdirectories
@@ -49,6 +60,49 @@ STATIC_DIR = BASE_DIR / "static"
 
 for dir_path in [DIMENSIONS_DIR, FACTS_DIR, STATIC_DIR]:
     dir_path.mkdir(exist_ok=True)
+
+# DataHub/schema resolution uses repo root
+_OPENINT_DATAHUB = _REPO_ROOT / "openint-datahub"
+
+
+def get_schema() -> Dict[str, Dict[str, Any]]:
+    """
+    Fetch table schema from DataHub API when available; otherwise use openint-datahub/schemas.py.
+    Returns dict mapping dataset name -> { description, category, fields }.
+    """
+    # Try DataHub API via sg_agent client (requires openint-agents on path)
+    try:
+        if str(_REPO_ROOT) not in sys.path:
+            sys.path.insert(0, str(_REPO_ROOT))
+        openint_agents = _REPO_ROOT / "openint-agents"
+        if openint_agents.exists() and str(openint_agents) not in sys.path:
+            sys.path.insert(0, str(openint_agents))
+        from sg_agent.datahub_client import get_schema_from_datahub  # type: ignore[import-not-found]
+        schema = get_schema_from_datahub()
+        if schema:
+            return schema
+    except Exception:
+        pass
+    # Fallback: openint-datahub/schemas.py
+    if _OPENINT_DATAHUB.exists() and str(_OPENINT_DATAHUB) not in sys.path:
+        sys.path.insert(0, str(_OPENINT_DATAHUB))
+    try:
+        from schemas import get_dataset_schemas
+        return get_dataset_schemas()
+    except Exception:
+        pass
+    return {}
+
+
+def _reorder_df_by_schema(dataset_name: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Reorder DataFrame columns to match schema field order when schema is available."""
+    if not SCHEMA or dataset_name not in SCHEMA:
+        return df
+    fields = SCHEMA[dataset_name].get("fields") or []
+    schema_cols = [f["name"] for f in fields if f["name"] in df.columns]
+    extra = [c for c in df.columns if c not in schema_cols]
+    return df[schema_cols + extra] if schema_cols else df
+
 
 TX_FACT_FILES = [
     "credit_transactions.csv", "debit_transactions.csv", "ach_transactions.csv",
@@ -63,12 +117,12 @@ DISPUTE_FACT_FILES = [
 
 
 def _ensure_10_digit_id(val: Any) -> Optional[int]:
-    """Ensure ID is a 10-digit integer. Handles float/NaN from CSV. Returns int or None."""
+    """Ensure ID is a 10-digit integer (for customer_id). Handles float/NaN from CSV. Returns int or None."""
     if pd.isna(val):
         return None
     try:
         v = int(float(val))
-        return v if 1_000_000_000 <= v <= 9_999_999_999 else None
+        return v if CUSTOMER_ID_MIN <= v <= CUSTOMER_ID_MAX else None
     except (ValueError, TypeError):
         return None
 
@@ -83,23 +137,6 @@ def _load_valid_customer_ids() -> Optional[set]:
         return set(int(x) for x in df["customer_id"].dropna().unique() if _ensure_10_digit_id(x) is not None)
     except Exception:
         return None
-
-
-
-
-def _get_max_transaction_id() -> int:
-    """Return max transaction_id across all transaction fact CSVs, or TRANSACTION_ID_BASE - 1 if none."""
-    mx = TRANSACTION_ID_BASE - 1
-    for fname in TX_FACT_FILES:
-        p = FACTS_DIR / fname
-        if p.exists():
-            try:
-                df = pd.read_csv(p, usecols=["transaction_id"], nrows=None)
-                if not df.empty and "transaction_id" in df.columns:
-                    mx = max(mx, int(df["transaction_id"].max()))
-            except Exception:
-                pass
-    return mx
 
 
 def _get_max_dispute_id() -> int:
@@ -248,33 +285,48 @@ def generate_zip_codes(num_records=50000):
 
 
 def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
-    """Generate customer dimension table. If not clean_run and customers.csv exists, appends new records."""
+    """
+    Generate customer dimension table. customer_id: 10-digit numbers only, no duplication in file.
+    If not clean_run and customers.csv exists, appends new records with IDs not already in file.
+    """
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     customers_path = DIMENSIONS_DIR / "customers.csv"
-    start_offset = 0
+    existing_ids: set = set()
     existing_df = None
     if not clean_run and customers_path.exists():
         try:
             existing_df = pd.read_csv(customers_path)
             if not existing_df.empty and "customer_id" in existing_df.columns:
-                start_offset = int(existing_df["customer_id"].max()) - CUSTOMER_ID_BASE + 1
+                for v in existing_df["customer_id"].dropna().unique():
+                    vid = _ensure_10_digit_id(v)
+                    if vid is not None:
+                        existing_ids.add(vid)
         except Exception:
             pass
+    # Generate num_records unique 10-digit IDs not already in file
+    pool_size = CUSTOMER_ID_MAX - CUSTOMER_ID_MIN + 1
+    if len(existing_ids) + num_records > pool_size:
+        raise ValueError(
+            f"Cannot generate {num_records:,} unique 10-digit customer_ids: "
+            f"{len(existing_ids):,} already used, pool is {pool_size:,}"
+        )
+    available = set(range(CUSTOMER_ID_MIN, CUSTOMER_ID_MAX + 1)) - existing_ids
+    new_ids = random.sample(list(available), num_records)
+
     print(f"\n📊 Generating {num_records:,} customer records (batch size: {batch_size:,})...")
-    if start_offset > 0:
-        print(f"   📎 Appending to existing ({start_offset:,} already); output: {customers_path.resolve()}")
+    if existing_ids:
+        print(f"   📎 Appending to existing ({len(existing_ids):,} already); output: {customers_path.resolve()}")
     else:
         print(f"   📁 Output: {customers_path.resolve()}")
-    
+    print(f"   📋 customer_id: 10-digit unique, no duplication")
+
     customers = []
-    
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
-        
-        for j in range(i, batch_end):
-            customer_id = CUSTOMER_ID_BASE + start_offset + j
+        for k in range(i, batch_end):
+            customer_id = new_ids[k]
             ssn = fake.ssn()
             first_name = fake.first_name()
             last_name = fake.last_name()
@@ -330,27 +382,28 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
     df = pd.DataFrame(customers)
     if existing_df is not None and len(existing_df) > 0:
         df = pd.concat([existing_df, df], ignore_index=True)
+    df = _reorder_df_by_schema("customers", df)
     df.to_csv(customers_path, index=False)
     print(f"✅ Generated customers.csv with {len(df):,} records")
     return df
 
 
-def generate_ach_transactions(num_records, customer_ids, batch_size=None, start_id=TRANSACTION_ID_BASE, clean_run=False):
-    """Generate ACH (Automated Clearing House) transactions. Returns (df, next_transaction_id)."""
+def generate_ach_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
+    """Generate ACH (Automated Clearing House) transactions. transaction_id = GUID (UUID). Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} ACH transaction records (batch size: {batch_size:,})...")
-    
+    print(f"   📋 transaction_id: GUID (UUID v4)")
+
     transactions = []
     transaction_types = ["Debit", "Credit"]
     ach_codes = ["PPD", "WEB", "TEL", "CCD", "ARC", "BOC", "POP"]
-    
+
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
-        
         for j in range(i, batch_end):
-            transaction_id = start_id + j
+            transaction_id = str(uuid.uuid4())
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-2y', end_date='now')
             transaction_date = transaction_datetime.date()
@@ -401,27 +454,28 @@ def generate_ach_transactions(num_records, customer_ids, batch_size=None, start_
             df_new = pd.concat([df_ex, df_new], ignore_index=True)
         except Exception:
             pass
+    df_new = _reorder_df_by_schema("ach_transactions", df_new)
     df_new.to_csv(path, index=False)
     print(f"✅ Generated ach_transactions.csv with {len(df_new):,} records")
-    return df_new, start_id + num_records
+    return df_new, None
 
 
-def generate_wire_transactions(num_records, customer_ids, batch_size=None, start_id=TRANSACTION_ID_BASE, clean_run=False):
-    """Generate Wire transfer transactions. Returns (df, next_transaction_id)."""
+def generate_wire_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
+    """Generate Wire transfer transactions. transaction_id = GUID (UUID). Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Wire transaction records (batch size: {batch_size:,})...")
-    
+    print(f"   📋 transaction_id: GUID (UUID v4)")
+
     transactions = []
     wire_types = ["Domestic", "International"]
     countries = ["US", "CA", "GB", "DE", "FR", "JP", "AU", "CH"]
-    
+
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
-        
         for j in range(i, batch_end):
-            transaction_id = start_id + j
+            transaction_id = str(uuid.uuid4())
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-2y', end_date='now')
             transaction_date = transaction_datetime.date()
@@ -483,17 +537,19 @@ def generate_wire_transactions(num_records, customer_ids, batch_size=None, start
             df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
         except Exception:
             pass
+    df_new = _reorder_df_by_schema("wire_transactions", df_new)
     df_new.to_csv(path, index=False)
     print(f"✅ Generated wire_transactions.csv with {len(df_new):,} records")
-    return df_new, start_id + num_records
+    return df_new, None
 
 
-def generate_credit_transactions(num_records, customer_ids, batch_size=None, start_id=TRANSACTION_ID_BASE, clean_run=False):
-    """Generate Credit card transactions. Returns (df, next_transaction_id)."""
+def generate_credit_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
+    """Generate Credit card transactions. transaction_id = GUID (UUID). Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Credit card transaction records (batch size: {batch_size:,})...")
-    
+    print(f"   📋 transaction_id: GUID (UUID v4)")
+
     transactions = []
     card_types = ["Visa", "Mastercard", "American Express", "Discover"]
     merchant_categories = [
@@ -506,11 +562,11 @@ def generate_credit_transactions(num_records, customer_ids, batch_size=None, sta
         batch = []
         
         for j in range(i, batch_end):
-            transaction_id = start_id + j
+            transaction_id = str(uuid.uuid4())
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-1y', end_date='now')
             transaction_date = transaction_datetime.date()
-            
+
             card_type = np.random.choice(card_types)
             card_number_last4 = str(np.random.randint(1000, 9999))
             amount = round(np.random.lognormal(mean=4, sigma=1.2), 2)
@@ -560,25 +616,25 @@ def generate_credit_transactions(num_records, customer_ids, batch_size=None, sta
             df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
         except Exception:
             pass
+    df_new = _reorder_df_by_schema("credit_transactions", df_new)
     df_new.to_csv(path, index=False)
     print(f"✅ Generated credit_transactions.csv with {len(df_new):,} records")
-    return df_new, start_id + num_records
+    return df_new, None
 
 
-def generate_check_transactions(num_records, customer_ids, batch_size=None, start_id=TRANSACTION_ID_BASE, clean_run=False):
-    """Generate Check transactions. Returns (df, next_transaction_id)."""
+def generate_check_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
+    """Generate Check transactions. transaction_id = GUID (UUID). Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Check transaction records (batch size: {batch_size:,})...")
-    
+    print(f"   📋 transaction_id: GUID (UUID v4)")
+
     transactions = []
-    
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
-        
         for j in range(i, batch_end):
-            transaction_id = start_id + j
+            transaction_id = str(uuid.uuid4())
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-2y', end_date='now')
             transaction_date = transaction_datetime.date()
@@ -624,17 +680,19 @@ def generate_check_transactions(num_records, customer_ids, batch_size=None, star
             df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
         except Exception:
             pass
+    df_new = _reorder_df_by_schema("check_transactions", df_new)
     df_new.to_csv(path, index=False)
     print(f"✅ Generated check_transactions.csv with {len(df_new):,} records")
-    return df_new, start_id + num_records
+    return df_new, None
 
 
-def generate_debit_transactions(num_records, customer_ids, batch_size=None, start_id=TRANSACTION_ID_BASE, clean_run=False):
-    """Generate Debit card transactions. Returns (df, next_transaction_id)."""
+def generate_debit_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
+    """Generate Debit card transactions. transaction_id = GUID (UUID). Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Debit card transaction records (batch size: {batch_size:,})...")
-    
+    print(f"   📋 transaction_id: GUID (UUID v4)")
+
     transactions = []
     transaction_types = ["Purchase", "ATM Withdrawal", "Online Payment", "Recurring Payment"]
     merchant_categories = [
@@ -698,9 +756,10 @@ def generate_debit_transactions(num_records, customer_ids, batch_size=None, star
             df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
         except Exception:
             pass
+    df_new = _reorder_df_by_schema("debit_transactions", df_new)
     df_new.to_csv(path, index=False)
     print(f"✅ Generated debit_transactions.csv with {len(df_new):,} records")
-    return df_new, start_id + num_records
+    return df_new, None
 
 
 def _generate_dispute_description_via_ollama(
@@ -796,8 +855,8 @@ def _generate_disputes_for_type(
 ) -> tuple:
     """
     Generate disputes for a single transaction type. Returns (df, next_dispute_id).
-    Ensures customer_id and transaction_id (both 10-digit) exist in customers.csv and
-    the respective transaction CSV. Only samples rows that pass referential integrity.
+    customer_id: 10-digit from customers.csv. transaction_id: GUID string from transaction CSV.
+    dispute_id: starts at 100K, monotonically increasing.
     """
     if not tx_path.exists():
         return None, dispute_id_start
@@ -822,9 +881,11 @@ def _generate_disputes_for_type(
     llm_ok = use_llm
     for _, tx in sample.iterrows():
         cust_id = _ensure_10_digit_id(tx["customer_id"])
-        txn_id = _ensure_10_digit_id(tx["transaction_id"])
-        if cust_id is None or txn_id is None:
+        # transaction_id is GUID (string) from transaction CSV; keep as-is
+        txn_id = tx["transaction_id"] if pd.notna(tx["transaction_id"]) else None
+        if cust_id is None or txn_id is None or str(txn_id).strip() == "":
             continue
+        txn_id_str = str(txn_id).strip()
         amount = tx.get("amount", 0)
         if pd.isna(amount) or amount <= 0:
             amount = round(np.random.lognormal(4, 1), 2)
@@ -836,18 +897,18 @@ def _generate_disputes_for_type(
             if desc is None:
                 llm_ok = False
         if not llm_ok:
-            desc = f"Dispute for {tx_type} transaction {txn_id}: {dispute_reason}"
+            desc = f"Dispute for {tx_type} transaction {txn_id_str}: {dispute_reason}"
         rows.append({
             "dispute_id": int(dispute_id),
             "transaction_type": tx_type,
-            "transaction_id": int(txn_id),
+            "transaction_id": txn_id_str,
             "customer_id": int(cust_id),
             "dispute_date": fake.date_between(start_date="-1y", end_date="today"),
             "dispute_reason": dispute_reason,
             "dispute_status": np.random.choice(dispute_statuses, p=[0.15, 0.25, 0.2, 0.25, 0.15]),
             "amount_disputed": amount_disputed,
             "currency": str(tx.get("currency", "USD")),
-            "description": desc[:500] if desc else f"Dispute for {tx_type} transaction {txn_id}",
+            "description": desc[:500] if desc else f"Dispute for {tx_type} transaction {txn_id_str}",
             "created_at": datetime.now(),
         })
         dispute_id += 1
@@ -892,6 +953,7 @@ def generate_disputes(num_disputes=5000, batch_size=None, use_llm=True, clean_ru
         ("check_transactions.csv", "check", ["transaction_id", "customer_id", "amount", "currency", "payee_name", "memo", "check_number"]),
     ]
     dispute_id = DISPUTE_ID_BASE if clean_run else _get_max_dispute_id() + 1
+    print(f"   📋 dispute_id: starting at {dispute_id:,} (100K+ monotonic)")
     per_type = max(100, num_disputes // 6)  # spread across 6 dispute types
     total_generated = 0
     dfs_all: List[pd.DataFrame] = []
@@ -937,19 +999,20 @@ def generate_disputes(num_disputes=5000, batch_size=None, use_llm=True, clean_ru
                 rows = []
                 for _, tx in sample.iterrows():
                     cust_id = _ensure_10_digit_id(tx["customer_id"])
-                    txn_id = _ensure_10_digit_id(tx["transaction_id"])
-                    if cust_id is None or txn_id is None:
+                    txn_id = tx["transaction_id"] if pd.notna(tx["transaction_id"]) else None
+                    if cust_id is None or txn_id is None or str(txn_id).strip() == "":
                         continue
+                    txn_id_str = str(txn_id).strip()
                     amount = tx.get("amount", 0)
                     if pd.isna(amount) or amount <= 0:
                         amount = round(np.random.lognormal(4, 1), 2)
                     amount_disputed = abs(round(float(amount), 2))
                     dispute_reason = np.random.choice(dispute_reasons)
-                    desc = f"Dispute for ATM transaction {txn_id}: {dispute_reason}"
+                    desc = f"Dispute for ATM transaction {txn_id_str}: {dispute_reason}"
                     rows.append({
                         "dispute_id": int(dispute_id),
                         "transaction_type": "debit",  # ATM txns are in debit_transactions; use "debit" for REFERENCES match
-                        "transaction_id": int(txn_id),
+                        "transaction_id": txn_id_str,
                         "customer_id": int(cust_id),
                         "dispute_date": fake.date_between(start_date="-1y", end_date="today"),
                         "dispute_reason": dispute_reason,
@@ -969,6 +1032,7 @@ def generate_disputes(num_disputes=5000, batch_size=None, use_llm=True, clean_ru
                             df_atm_out = pd.concat([df_ex, df_atm_out], ignore_index=True)
                         except Exception:
                             pass
+                    df_atm_out = _reorder_df_by_schema("atm_disputes", df_atm_out)
                     df_atm_out.to_csv(out_path, index=False)
                     total_generated += len(df_atm_out)
                     dfs_all.append(df_atm_out)
@@ -998,10 +1062,13 @@ Examples:
   python generate_openint_test_data.py --only-static
   python generate_openint_test_data.py --only-disputes
 
-  # With custom counts
+  # With custom counts (capped by --max-*)
   python generate_openint_test_data.py --only-customers --num-customers 50000
   python generate_openint_test_data.py --only-transactions --num-transactions 100000
   python generate_openint_test_data.py --only-disputes --num-disputes 500 --no-llm
+
+  # Use max limits (default: 10k customers, 50k transactions, 20k disputes)
+  python generate_openint_test_data.py --max-customers 10000 --max-transactions 50000 --max-disputes 20000
         """
     )
     only_group = parser.add_mutually_exclusive_group()
@@ -1053,6 +1120,24 @@ Examples:
         default=5_000,
         help="Number of disputes to generate from existing transactions (default: 5,000); used with --only-disputes or after transactions"
     )
+    parser.add_argument(
+        "--max-customers",
+        type=int,
+        default=10_000,
+        help="Maximum number of customer records to generate; caps --num-customers (default: 10,000)"
+    )
+    parser.add_argument(
+        "--max-transactions",
+        type=int,
+        default=50_000,
+        help="Maximum total transactions to generate; caps --num-transactions (default: 50,000)"
+    )
+    parser.add_argument(
+        "--max-disputes",
+        type=int,
+        default=20_000,
+        help="Maximum number of disputes to generate; caps --num-disputes (default: 20,000)"
+    )
     default_batch = _default_generate_batch_size()
     parser.add_argument(
         "--batch-size",
@@ -1062,10 +1147,22 @@ Examples:
     )
     args = parser.parse_args()
 
+    # Apply max caps: never generate more than --max-customers, --max-transactions, --max-disputes
+    num_customers_eff = min(args.num_customers, args.max_customers)
+    num_transactions_eff = min(args.num_transactions, args.max_transactions)
+    num_disputes_eff = min(args.num_disputes, args.max_disputes)
+
     load_static = args.only_static or (not args.only_customers and not args.only_transactions and not args.only_disputes)
     load_customers = args.only_customers or (not args.only_static and not args.only_transactions and not args.only_disputes)
     load_transactions = args.only_transactions or (not args.only_static and not args.only_customers and not args.only_disputes)
     load_disputes = args.only_disputes or (not args.only_static and not args.only_customers and not args.only_transactions)
+
+    global SCHEMA
+    SCHEMA = get_schema()
+    if SCHEMA:
+        print("   📋 Schema: loaded (DataHub API or openint-datahub/schemas.py)")
+    else:
+        print("   📋 Schema: none (using built-in column order)")
 
     print("=" * 80)
     print("🏦 openInt Test Data Generator")
@@ -1075,6 +1172,9 @@ Examples:
         print("   🧹 Clean run: overwriting output files")
     else:
         print("   📎 Append mode: adding to existing files (use --clean-run to overwrite)")
+    print(f"   📋 Limits: max-customers={args.max_customers:,}, max-transactions={args.max_transactions:,}, max-disputes={args.max_disputes:,}")
+    if num_customers_eff < args.num_customers or num_transactions_eff < args.num_transactions or num_disputes_eff < args.num_disputes:
+        print(f"   📋 Effective (capped): customers={num_customers_eff:,}, transactions={num_transactions_eff:,}, disputes={num_disputes_eff:,}")
     if args.only_customers:
         print("   📌 Generating only: customers")
     elif args.only_transactions:
@@ -1098,7 +1198,7 @@ Examples:
     # Generate customers and/or get customer_ids for transactions
     customer_ids = None
     if load_customers:
-        customers_df = generate_customers(num_records=args.num_customers, batch_size=args.batch_size, clean_run=args.clean_run)
+        customers_df = generate_customers(num_records=num_customers_eff, batch_size=args.batch_size, clean_run=args.clean_run)
         customer_ids = customers_df['customer_id'].tolist()
     elif load_transactions:
         # Transactions need customer_ids from existing customers.csv
@@ -1111,11 +1211,11 @@ Examples:
         customer_ids = customers_df['customer_id'].tolist()
         print(f"\n📂 Loaded {len(customer_ids):,} customer IDs from {customers_path}")
 
-    # Generate transaction fact tables (numeric transaction_id: global counter 1, 2, 3, ...)
+    # Generate transaction fact tables (transaction_id = GUID per row; dispute_id = 100K+ monotonic)
     transaction_distribution = None
     if load_transactions and customer_ids is not None:
         print("\n💳 Generating transaction fact tables...")
-        total_transactions = args.num_transactions
+        total_transactions = num_transactions_eff
         transaction_distribution = {
             "credit": int(total_transactions * 0.35),
             "debit": int(total_transactions * 0.30),
@@ -1123,25 +1223,24 @@ Examples:
             "wire": int(total_transactions * 0.10),
             "check": int(total_transactions * 0.05),
         }
-        next_txn_id = TRANSACTION_ID_BASE if args.clean_run else _get_max_transaction_id() + 1
-        _, next_txn_id = generate_credit_transactions(
-            transaction_distribution["credit"], customer_ids, args.batch_size, start_id=next_txn_id, clean_run=args.clean_run
+        generate_credit_transactions(
+            transaction_distribution["credit"], customer_ids, args.batch_size, start_id=None, clean_run=args.clean_run
         )
-        _, next_txn_id = generate_debit_transactions(
-            transaction_distribution["debit"], customer_ids, args.batch_size, start_id=next_txn_id, clean_run=args.clean_run
+        generate_debit_transactions(
+            transaction_distribution["debit"], customer_ids, args.batch_size, start_id=None, clean_run=args.clean_run
         )
-        _, next_txn_id = generate_ach_transactions(
-            transaction_distribution["ach"], customer_ids, args.batch_size, start_id=next_txn_id, clean_run=args.clean_run
+        generate_ach_transactions(
+            transaction_distribution["ach"], customer_ids, args.batch_size, start_id=None, clean_run=args.clean_run
         )
-        _, next_txn_id = generate_wire_transactions(
-            transaction_distribution["wire"], customer_ids, args.batch_size, start_id=next_txn_id, clean_run=args.clean_run
+        generate_wire_transactions(
+            transaction_distribution["wire"], customer_ids, args.batch_size, start_id=None, clean_run=args.clean_run
         )
         generate_check_transactions(
-            transaction_distribution["check"], customer_ids, args.batch_size, start_id=next_txn_id, clean_run=args.clean_run
+            transaction_distribution["check"], customer_ids, args.batch_size, start_id=None, clean_run=args.clean_run
         )
         # Generate disputes from the transactions we just created
         disputes_df = generate_disputes(
-            num_disputes=args.num_disputes, batch_size=args.batch_size, use_llm=not args.no_llm, clean_run=args.clean_run
+            num_disputes=num_disputes_eff, batch_size=args.batch_size, use_llm=not args.no_llm, clean_run=args.clean_run
         )
     else:
         disputes_df = None
@@ -1150,7 +1249,7 @@ Examples:
     if load_disputes and not (load_transactions and customer_ids is not None):
         print("\n📋 Generating disputes (ach, credit, debit, wire, check, atm)...")
         disputes_df = generate_disputes(
-            num_disputes=args.num_disputes, batch_size=args.batch_size, use_llm=not args.no_llm, clean_run=args.clean_run
+            num_disputes=num_disputes_eff, batch_size=args.batch_size, use_llm=not args.no_llm, clean_run=args.clean_run
         )
     elif not load_transactions:
         disputes_df = None
@@ -1166,14 +1265,14 @@ Examples:
     if load_static:
         print(f"   • Static: country_codes, state_codes, zip_codes")
     if load_customers:
-        print(f"   • Customer records: {args.num_customers:,}")
+        print(f"   • Customer records: {num_customers_eff:,}")
     if load_transactions and transaction_distribution:
         print(f"   • Credit transactions: {transaction_distribution['credit']:,}")
         print(f"   • Debit transactions: {transaction_distribution['debit']:,}")
         print(f"   • ACH transactions: {transaction_distribution['ach']:,}")
         print(f"   • Wire transactions: {transaction_distribution['wire']:,}")
         print(f"   • Check transactions: {transaction_distribution['check']:,}")
-        print(f"   • Total transactions: {args.num_transactions:,}")
+        print(f"   • Total transactions: {num_transactions_eff:,}")
     if disputes_df is not None:
         print(f"   • Disputes: {len(disputes_df):,}")
     print(f"\n📁 Data saved to:")

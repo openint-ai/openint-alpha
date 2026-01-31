@@ -124,9 +124,9 @@ def main():
 
     # 4. customers.csv check
     print("\n4. customers.csv check:")
-    csv_path = _repo_root / "testdata" / "dimensions" / "customers.csv"
+    csv_path = _repo_root / "data" / "dimensions" / "customers.csv"
     if not csv_path.exists():
-        csv_path = Path("testdata/dimensions/customers.csv")
+        csv_path = Path("data/dimensions/customers.csv")
     if csv_path.exists():
         import csv
         with open(csv_path, encoding="utf-8") as f:
