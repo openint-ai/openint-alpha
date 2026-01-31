@@ -36,7 +36,7 @@ python generators/generate_openint_test_data.py --only-customers
 python generators/generate_openint_test_data.py --only-transactions
 ```
 
-Disputes are created **only** from existing transaction data: each dispute references a valid `customer_id` and `transaction_id` (both 10-digit) from the respective transaction CSVs. Output files mirror transaction types: `ach_disputes.csv`, `credit_disputes.csv`, `debit_disputes.csv`, `wire_disputes.csv`, `check_disputes.csv`, `atm_disputes.csv`.
+Disputes are created **only** from existing transaction data: each dispute references a valid `customer_id` (BIGINT) and `transaction_id` (UUID) from the respective transaction CSVs. Output files mirror transaction types: `ach_disputes.csv`, `credit_disputes.csv`, `debit_disputes.csv`, `wire_disputes.csv`, `check_disputes.csv`, `atm_disputes.csv`.
 
 **Output directory:** Data is always written to `openint-testdata/data/` (regardless of CWD).
 

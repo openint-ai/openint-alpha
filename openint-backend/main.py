@@ -2089,9 +2089,10 @@ def multi_agent_demo_run():
                 if has_user_sentence:
                     prompt = (
                         "Edit this user query: fix spelling and grammar, remove profanity, preserve intent. "
-                        "CRITICAL: Never modify any 10-digit number, SSN (XXX-XX-XXXX), phone/mobile/cell/telephone, account numbers, or identifiers — preserve them exactly character-for-character. "
-                        "A 10-digit number like 1000007542 is a customer ID, transaction ID, or dispute ID — do NOT replace it with XXX-XX-XXXX or any placeholder; keep the digits as-is. "
-                        "You may add a little context for semantic search. Output ONLY the corrected query, nothing else.\n\n"
+                        "CRITICAL — ID format (never modify or reinterpret): "
+                        "customer_id = BIGINT (e.g. 1026847926404610462), transaction_id = UUID (e.g. 127e9514-be46-4661-9179-bf6896222cbd), dispute_id = INT (e.g. 762938026). "
+                        "Also preserve SSN (XXX-XX-XXXX), phone numbers, and account numbers exactly. "
+                        "Do NOT replace any ID with XXX-XX-XXXX or truncate. Output ONLY the corrected query, nothing else.\n\n"
                         "USER QUERY:\n"
                         "---\n"
                         "{}\n"
@@ -2101,8 +2102,8 @@ def multi_agent_demo_run():
                     prompt = (
                         "Generate a single natural-language question that could be asked about a financial or "
                         "banking dataset (e.g. customers, transactions, accounts, disputes). "
-                        "If you include example IDs, use exactly 10-digit numeric IDs: customer (e.g. 1000000001), transaction (e.g. 1000001234), dispute (e.g. 1000005678). Never use prefixes like CUST or TX. "
-                        "Output only the question, nothing else: "
+                        "ID format: customer_id BIGINT (e.g. 1026847926404610462), transaction_id UUID (e.g. 127e9514-be46-4661-9179-bf6896222cbd), dispute_id INT (e.g. 762938026). "
+                        "If including example IDs, use these exact formats. Never use prefixes like CUST or TX. Output only the question, nothing else: "
                     )
                 msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": prompt}], "messageId": "multi-demo-1", "kind": "message"}}
                 task_sg = handle_sg_agent_message_send(msg)

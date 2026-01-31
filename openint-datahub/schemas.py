@@ -12,10 +12,10 @@ from typing import Any, Dict, List
 def _dispute_fields() -> List[Dict[str, Any]]:
     """Shared dispute schema fields (used by all type-specific dispute tables)."""
     return [
-        {"name": "dispute_id", "type": "STRING", "description": "Unique dispute identifier"},
+        {"name": "dispute_id", "type": "INT", "description": "Unique dispute identifier"},
         {"name": "transaction_type", "type": "STRING", "description": "Type of transaction (ach, wire, credit, etc.)"},
-        {"name": "transaction_id", "type": "STRING", "description": "Foreign key to transaction table"},
-        {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+        {"name": "transaction_id", "type": "STRING", "description": "Foreign key to transaction table (UUID)"},
+        {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
         {"name": "dispute_date", "type": "DATE", "description": "Date dispute was filed"},
         {"name": "dispute_reason", "type": "STRING", "description": "Reason for dispute"},
         {"name": "dispute_status", "type": "STRING", "description": "Dispute status"},
@@ -39,7 +39,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
             "description": "Customer dimension table containing customer profile information",
             "category": "dimension",
             "fields": [
-                {"name": "customer_id", "type": "STRING", "description": "Unique customer identifier (CUST format)"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Unique customer identifier (BIGINT)"},
                 {"name": "ssn", "type": "STRING", "description": "Social Security Number"},
                 {"name": "first_name", "type": "STRING", "description": "Customer first name"},
                 {"name": "last_name", "type": "STRING", "description": "Customer last name"},
@@ -66,7 +66,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
             "category": "fact",
             "fields": [
                 {"name": "transaction_id", "type": "STRING", "description": "Unique transaction identifier"},
-                {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
                 {"name": "transaction_date", "type": "DATE", "description": "Transaction date"},
                 {"name": "transaction_datetime", "type": "DATETIME", "description": "Transaction timestamp"},
                 {"name": "transaction_type", "type": "STRING", "description": "Transaction type (Credit/Debit)"},
@@ -86,7 +86,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
             "category": "fact",
             "fields": [
                 {"name": "transaction_id", "type": "STRING", "description": "Unique transaction identifier"},
-                {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
                 {"name": "transaction_date", "type": "DATE", "description": "Transaction date"},
                 {"name": "transaction_datetime", "type": "DATETIME", "description": "Transaction timestamp"},
                 {"name": "wire_type", "type": "STRING", "description": "Wire type (Domestic/International)"},
@@ -110,7 +110,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
             "category": "fact",
             "fields": [
                 {"name": "transaction_id", "type": "STRING", "description": "Unique transaction identifier"},
-                {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
                 {"name": "transaction_date", "type": "DATE", "description": "Transaction date"},
                 {"name": "transaction_datetime", "type": "DATETIME", "description": "Transaction timestamp"},
                 {"name": "card_type", "type": "STRING", "description": "Card type (Visa, Mastercard, etc.)"},
@@ -134,7 +134,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
             "category": "fact",
             "fields": [
                 {"name": "transaction_id", "type": "STRING", "description": "Unique transaction identifier"},
-                {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
                 {"name": "transaction_date", "type": "DATE", "description": "Transaction date"},
                 {"name": "transaction_datetime", "type": "DATETIME", "description": "Transaction timestamp"},
                 {"name": "transaction_type", "type": "STRING", "description": "Transaction type"},
@@ -154,7 +154,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
             "category": "fact",
             "fields": [
                 {"name": "transaction_id", "type": "STRING", "description": "Unique transaction identifier"},
-                {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
                 {"name": "transaction_date", "type": "DATE", "description": "Transaction date"},
                 {"name": "transaction_datetime", "type": "DATETIME", "description": "Transaction timestamp"},
                 {"name": "check_number", "type": "STRING", "description": "Check number"},
@@ -175,7 +175,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
                 {"name": "dispute_id", "type": "STRING", "description": "Unique dispute identifier"},
                 {"name": "transaction_type", "type": "STRING", "description": "Type of transaction (ach, wire, credit, etc.)"},
                 {"name": "transaction_id", "type": "STRING", "description": "Foreign key to transaction table"},
-                {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+                {"name": "customer_id", "type": "BIGINT", "description": "Foreign key to customers table"},
                 {"name": "dispute_date", "type": "DATE", "description": "Date dispute was filed"},
                 {"name": "dispute_reason", "type": "STRING", "description": "Reason for dispute"},
                 {"name": "dispute_status", "type": "STRING", "description": "Dispute status"},

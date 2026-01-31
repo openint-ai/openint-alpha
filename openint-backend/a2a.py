@@ -218,24 +218,28 @@ def _make_task(
     }
 
 
-def _normalize_ids_to_10_digits(text: str) -> str:
-    """Replace CUST/TX/DBT-prefixed IDs with 10-digit numeric form. E.g. CUST00631102 -> 1000631102."""
+def _normalize_ids(text: str) -> str:
+    """Replace CUST/DBT/DSP-prefixed IDs with raw numeric form. CUST1026847926404610462 -> 1026847926404610462.
+    Preserves UUIDs (transaction_id). IDs match generator: customer_id BIGINT, transaction_id UUID, dispute_id INT."""
     import re
     if not text or not isinstance(text, str):
         return text
 
-    def _repl(m):
-        digits = "".join(c for c in m.group(0) if c.isdigit())
-        if not digits:
-            return m.group(0)
-        try:
-            n = int(digits)
-            return str(1000000000 + (n % 1000000000))
-        except (TypeError, ValueError):
-            return m.group(0)
+    def _repl_numeric(m):
+        suffix = m.group(1).replace("-", "").replace(" ", "").strip()
+        return suffix if suffix.isdigit() else m.group(0)
 
-    # Match CUST, TX, DBT, DSP followed by digits (with optional spaces)
-    text = re.sub(r"\b(?:CUST|TX|DBT|DSP)\s*\d+\b", _repl, text, flags=re.IGNORECASE)
+    def _repl_tx(m):
+        rest = m.group(1).strip()
+        if re.match(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", rest, re.IGNORECASE):
+            return rest
+        digits = "".join(c for c in rest if c.isdigit())
+        return digits if digits else m.group(0)
+
+    # CUST/DBT/DSP + digits -> raw digits (BIGINT/INT)
+    text = re.sub(r"\b(?:CUST|DBT|DSP)\s*([\d\s\-]+)\b", _repl_numeric, text, flags=re.IGNORECASE)
+    # TX + UUID or digits -> preserve UUID or raw digits
+    text = re.sub(r"\bTX\s+([\da-fA-F\-]+)\b", _repl_tx, text, flags=re.IGNORECASE)
     return text
 
 
@@ -307,11 +311,13 @@ def _restore_phone_from_original(prompt: str, reply: str) -> str:
     return pat.sub(repl, reply)
 
 
-def _restore_10digit_ids_from_original(prompt: str, reply: str) -> str:
+def _restore_ids_from_original(prompt: str, reply: str) -> str:
     """
-    Restore plain 10-digit numbers (customer IDs, transaction IDs, dispute IDs) from original
-    into the LLM reply. The LLM sometimes corrupts them (e.g. 1000003621 -> 100000362 or 1,000,003,621),
-    or wrongly replaces them with SSN placeholder (XXX-XX-XXXX). Preserves the exact original form.
+    Restore IDs from original user query into the LLM reply. Handles:
+    - customer_id (BIGINT): 9-19 digit numbers
+    - transaction_id (UUID): xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    - dispute_id (INT): 6-10 digit numbers
+    The LLM sometimes corrupts them (truncation, comma-formatting) or wrongly replaces with XXX-XX-XXXX.
     """
     import re
     if not reply or not prompt:
@@ -319,31 +325,30 @@ def _restore_10digit_ids_from_original(prompt: str, reply: str) -> str:
     original = _extract_original_from_prompt(prompt)
     if not original:
         return reply
-    # Find all 10-digit numbers in original (plain, no SSN/phone - those are handled separately)
-    # Exclude SSN format XXX-XX-XXXX and phone-like patterns
-    plain_10 = re.findall(r"\b\d{10}\b", original)
-    if not plain_10:
-        return reply
+    # Find numeric IDs (BIGINT customer_id, INT dispute_id): 9-19 digits, exclude SSN/phone
+    plain_numeric = re.findall(r"\b\d{9,19}\b", original)
+    # Find UUIDs (transaction_id)
+    uuid_pattern = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    plain_uuids = re.findall(uuid_pattern, original, re.IGNORECASE)
     # If LLM wrongly turned a customer/transaction/dispute ID into SSN placeholder, restore it
-    # Only when original has no real SSN (XXX-XX-XXXX), so we don't overwrite real SSN restoration
     has_ssn_in_original = bool(re.search(r"\d{3}-\d{2}-\d{4}", original))
     ssn_placeholder = re.compile(r"XXX-XX-XXXX", re.IGNORECASE)
-    if not has_ssn_in_original and ssn_placeholder.search(reply):
-        reply = ssn_placeholder.sub(plain_10[0], reply, count=1)
-    for orig in plain_10:
+    if not has_ssn_in_original and plain_numeric and ssn_placeholder.search(reply):
+        reply = ssn_placeholder.sub(plain_numeric[0], reply, count=1)
+    for orig in plain_numeric:
         # Replace corrupted forms in reply with exact original
-        # 1. Missing last digit: 1000003621 -> 100000362
-        reply = re.sub(r"\b" + re.escape(orig[:-1]) + r"\b", orig, reply)
-        # 2. Missing first digit: 1000003621 -> 000003621 (only if orig doesn't start with 0)
-        if orig[0] != "0":
+        if len(orig) > 1:
+            reply = re.sub(r"\b" + re.escape(orig[:-1]) + r"\b", orig, reply)
+        if orig[0] != "0" and len(orig) > 1:
             reply = re.sub(r"\b" + re.escape(orig[1:]) + r"\b", orig, reply)
-        # 3. Extra trailing digit: 1000003621 -> 10000036210
         reply = re.sub(r"\b" + re.escape(orig) + r"0\b", orig, reply)
-        # 4. Extra leading zero: 1000003621 -> 01000003621
         reply = re.sub(r"\b0" + re.escape(orig) + r"\b", orig, reply)
-        # 5. Comma-formatted: 1,000,003,621 -> 1000003621
         comma_fmt = re.sub(r"(\d)(?=(\d{3})+(?!\d))", r"\1,", orig)
         reply = reply.replace(comma_fmt, orig)
+    for orig in plain_uuids:
+        # Restore UUID if LLM removed hyphens or altered it
+        no_hyphens = orig.replace("-", "")
+        reply = re.sub(r"\b" + re.escape(no_hyphens) + r"\b", orig, reply, flags=re.IGNORECASE)
     return reply
 
 
@@ -434,8 +439,8 @@ def handle_sg_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         if reply:
             reply = _restore_ssn_from_original(text, reply)
             reply = _restore_phone_from_original(text, reply)
-            reply = _restore_10digit_ids_from_original(text, reply)
-            reply = _normalize_ids_to_10_digits(reply)
+            reply = _restore_ids_from_original(text, reply)
+            reply = _normalize_ids(reply)
             artifacts = [{
                 "artifactId": str(uuid.uuid4()),
                 "name": "improved_or_generated_sentence",
@@ -485,7 +490,7 @@ def handle_sg_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         for i, item in enumerate(sentences_list[:count]):
             s = (item.get("sentence") or "").strip()
             if s:
-                s = _normalize_ids_to_10_digits(s)
+                s = _normalize_ids(s)
                 parts.append({"kind": "text", "text": s, "metadata": {"category": item.get("category", "Analyst"), "index": i}})
         if not parts:
             parts = [{"kind": "text", "text": "No sentences generated."}]

@@ -43,7 +43,7 @@ def _build_prompt(schema_summary: str, count: int, short_for_lucky: bool = False
     (or openint-datahub fallback). schema_source is 'datahub' or 'openint-datahub'."""
     context_label = "DataHub assets and schema (from DataHub catalog)" if schema_source == "datahub" else "schema (from openint-datahub; DataHub unavailable)"
     if short_for_lucky:
-        return f"""You are helping a banking data platform. Context to the LLM: {context_label}. Given the schema below, generate exactly {count} natural-language questions (1-3 sentences each). Banking/data/analytics/regulatory only. Return a JSON array of objects with "sentence" and "category" (one of: Analyst, Customer Care, Business Analyst, Regulatory). Use only table/field names from the schema. If you include example IDs, use exactly 10-digit numeric IDs: customer_id (e.g. 1000000001), transaction_id (e.g. 1000001234), dispute_id (e.g. 1000005678). Never use prefixes like CUST or TX. Return ONLY the JSON array.
+        return f"""You are helping a banking data platform. Context to the LLM: {context_label}. Given the schema below, generate exactly {count} natural-language questions (1-3 sentences each). Banking/data/analytics/regulatory only. Return a JSON array of objects with "sentence" and "category" (one of: Analyst, Customer Care, Business Analyst, Regulatory). Use only table/field names from the schema. ID format: customer_id BIGINT (e.g. 1026847926404610462), transaction_id UUID (e.g. 127e9514-be46-4661-9179-bf6896222cbd), dispute_id INT (e.g. 762938026). Never use prefixes like CUST or TX. Never replace with XXX-XX-XXXX. Return ONLY the JSON array.
 
 Schema:
 {schema_summary}"""
@@ -58,7 +58,7 @@ Rules:
 - Business Analyst: KPIs, trends, segments, comparisons, year-over-year, regional breakdowns.
 - Regulatory: compliance, reporting, audit, SAR, CTR, multi-condition filters, audit trails.
 - Use only table/field names from the schema. All questions must be banking/data/analytics/regulatory in nature.
-- If you include example IDs (customer, transaction, dispute), use exactly 10-digit numeric IDs only: customer_id (e.g. 1000000001), transaction_id (e.g. 1000001234), dispute_id (e.g. 1000005678). Never use prefixes like CUST or TX.
+- ID format (CRITICAL — never misinterpret or reformat): customer_id BIGINT (e.g. 1026847926404610462), transaction_id UUID (e.g. 127e9514-be46-4661-9179-bf6896222cbd), dispute_id INT (e.g. 762938026). When including example IDs, use these exact formats. Never use prefixes like CUST or TX. Never replace with XXX-XX-XXXX.
 - CRITICAL — Length and complexity: Each question MUST be at least 5x longer than a one-line question (aim for 50–120+ words). Make every query complex: use multiple clauses, conditions, and groupings. Include at least 3–5 of: time ranges, breakdowns (by region/type/state), comparisons (vs last period), explicit fields to return, filters (amounts, statuses), and purpose (e.g. "for executive summary", "for compliance review"). No short one-liners.
 - Return ONLY the JSON array, no other text."""
 
@@ -168,7 +168,7 @@ def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any
         "For customer {cid}, give me a summary of failed or reversed transactions in the last 60 days with transaction type, amount, date, and reason if available, and list any related disputes so we can resolve in one call.",
     ]
     for t in templates_care:
-        s = t.format(cid="1000000001")
+        s = t.format(cid="1026847926404610462")  # Example BIGINT customer_id
         sentences.append({"sentence": s, "category": "Customer Care", "source": "template"})
 
     # Business analyst style
