@@ -58,14 +58,16 @@ def _default_batch_size() -> int:
 
 
 # Data directories: resolve relative to project (repo) root
-# testdata lives at <repo_root>/testdata, not openint-testdata/testdata
+# testdata: generator writes to openint-testdata/testdata; loaders also check repo_root/testdata
 _LOADER_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _LOADER_DIR.parent.parent  # openint-testdata -> repo root
+_TESTDATA_ROOT = _LOADER_DIR.parent  # openint-testdata
 _BASE_CANDIDATES = [
-    _REPO_ROOT / "testdata",  # Primary: repo root / testdata
-    Path("testdata"),         # Fallback: CWD-relative
+    _REPO_ROOT / "testdata",           # Primary: repo root / testdata
+    _TESTDATA_ROOT / "testdata",       # Generator output: openint-testdata/testdata
+    Path("testdata"),                  # CWD-relative
 ]
-BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _REPO_ROOT / "testdata")
+BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _TESTDATA_ROOT / "testdata")
 DIMENSIONS_DIR = BASE_DIR / "dimensions"
 FACTS_DIR = BASE_DIR / "facts"
 STATIC_DIR = BASE_DIR / "static"

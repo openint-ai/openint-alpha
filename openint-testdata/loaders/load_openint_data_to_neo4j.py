@@ -42,10 +42,14 @@ try:
 except ImportError:
     get_dataset_schemas = None
 
-# Data directories (same layout as Milvus loader)
-BASE_DIR = Path("testdata")
-if not BASE_DIR.exists():
-    BASE_DIR = _repo_root / "testdata"
+# Data directories (aligned with Milvus loader: generator writes to openint-testdata/testdata)
+_testdata_root = Path(__file__).resolve().parent.parent  # openint-testdata
+_BASE_CANDIDATES = [
+    _repo_root / "testdata",
+    _testdata_root / "testdata",  # Generator output: openint-testdata/testdata
+    Path("testdata"),
+]
+BASE_DIR = next((p for p in _BASE_CANDIDATES if p.exists()), _testdata_root / "testdata")
 DIMENSIONS_DIR = BASE_DIR / "dimensions"
 FACTS_DIR = BASE_DIR / "facts"
 
@@ -520,7 +524,7 @@ def main():
                 csv_path,
                 batch_size=args.batch_size,
                 max_records=max_per_file,
-                schema_fields=_schema_field_names("disputes"),
+                schema_fields=_schema_field_names(dataset_name) or _schema_field_names("disputes"),
             )
             results.append(r)
 

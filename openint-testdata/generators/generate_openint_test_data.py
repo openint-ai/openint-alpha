@@ -464,7 +464,7 @@ def generate_wire_transactions(num_records, customer_ids, batch_size=None, start
                 "beneficiary_account": beneficiary_account,
                 "beneficiary_name": beneficiary_name,
                 "beneficiary_country": beneficiary_country,
-                "beneficiary_openInt_swift": beneficiary_openInt_swift,
+                "beneficiary_bank_swift": beneficiary_openInt_swift,
                 "fee": fee,
                 "description": f"Wire Transfer - {wire_type}",
                 "status": status,

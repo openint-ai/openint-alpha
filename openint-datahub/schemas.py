@@ -3,10 +3,27 @@ Schema definitions for openInt testdata datasets.
 These schemas define the structure of each dataset for DataHub metadata ingestion.
 """
 
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 # Import DataHub classes only when needed (in ingest_metadata.py)
 # This allows schemas.py to be imported without DataHub SDK installed
+
+
+def _dispute_fields() -> List[Dict[str, Any]]:
+    """Shared dispute schema fields (used by all type-specific dispute tables)."""
+    return [
+        {"name": "dispute_id", "type": "STRING", "description": "Unique dispute identifier"},
+        {"name": "transaction_type", "type": "STRING", "description": "Type of transaction (ach, wire, credit, etc.)"},
+        {"name": "transaction_id", "type": "STRING", "description": "Foreign key to transaction table"},
+        {"name": "customer_id", "type": "STRING", "description": "Foreign key to customers table"},
+        {"name": "dispute_date", "type": "DATE", "description": "Date dispute was filed"},
+        {"name": "dispute_reason", "type": "STRING", "description": "Reason for dispute"},
+        {"name": "dispute_status", "type": "STRING", "description": "Dispute status"},
+        {"name": "amount_disputed", "type": "NUMBER", "description": "Amount being disputed"},
+        {"name": "currency", "type": "STRING", "description": "Currency code"},
+        {"name": "description", "type": "STRING", "description": "Dispute description"},
+        {"name": "created_at", "type": "DATETIME", "description": "Record creation timestamp"},
+    ]
 
 
 def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
@@ -152,7 +169,7 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
         },
         
         "disputes": {
-            "description": "Transaction dispute fact table",
+            "description": "Transaction dispute fact table (generic)",
             "category": "fact",
             "fields": [
                 {"name": "dispute_id", "type": "STRING", "description": "Unique dispute identifier"},
@@ -168,6 +185,12 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
                 {"name": "created_at", "type": "DATETIME", "description": "Record creation timestamp"},
             ]
         },
+        "ach_disputes": {"description": "ACH transaction disputes", "category": "fact", "fields": _dispute_fields()},
+        "credit_disputes": {"description": "Credit transaction disputes", "category": "fact", "fields": _dispute_fields()},
+        "debit_disputes": {"description": "Debit transaction disputes", "category": "fact", "fields": _dispute_fields()},
+        "wire_disputes": {"description": "Wire transaction disputes", "category": "fact", "fields": _dispute_fields()},
+        "check_disputes": {"description": "Check transaction disputes", "category": "fact", "fields": _dispute_fields()},
+        "atm_disputes": {"description": "ATM transaction disputes", "category": "fact", "fields": _dispute_fields()},
         
         # Static Dimension Tables
         "country_codes": {
