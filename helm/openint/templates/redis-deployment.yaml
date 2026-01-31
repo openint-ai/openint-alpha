@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openint-redis
+  labels:
+    app: openint-redis
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openint-redis
+  template:
+    metadata:
+      labels:
+        app: openint-redis
+    spec:
+      containers:
+        - name: redis
+          image: "{{ .Values.redis.image }}:{{ .Values.redis.tag }}"
+          ports:
+            - containerPort: {{ .Values.redis.port }}
+          command: ["redis-server", "--appendonly", "yes"]
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          emptyDir: {}

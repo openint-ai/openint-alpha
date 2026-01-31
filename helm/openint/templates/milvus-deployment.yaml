@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openint-milvus
+  labels:
+    app: openint-milvus
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openint-milvus
+  template:
+    metadata:
+      labels:
+        app: openint-milvus
+    spec:
+      containers:
+        - name: etcd
+          image: "{{ .Values.milvus.etcd.image }}:{{ .Values.milvus.etcd.tag }}"
+          command: ["etcd"]
+          args:
+            - "--advertise-client-urls=http://127.0.0.1:2379"
+            - "--listen-client-urls=http://0.0.0.0:2379"
+            - "--data-dir=/etcd"
+          volumeMounts:
+            - name: etcd-data
+              mountPath: /etcd
+
+        - name: minio
+          image: "{{ .Values.milvus.minio.image }}:{{ .Values.milvus.minio.tag }}"
+          command: ["minio"]
+          args: ["server", "/minio_data"]
+          env:
+            - name: MINIO_ACCESS_KEY
+              value: minioadmin
+            - name: MINIO_SECRET_KEY
+              value: minioadmin
+          volumeMounts:
+            - name: minio-data
+              mountPath: /minio_data
+
+        - name: milvus
+          image: "{{ .Values.milvus.image }}:{{ .Values.milvus.tag }}"
+          command: ["milvus"]
+          args: ["run", "standalone"]
+          env:
+            - name: ETCD_ENDPOINTS
+              value: "127.0.0.1:2379"
+            - name: MINIO_ADDRESS
+              value: "127.0.0.1:9000"
+          ports:
+            - containerPort: {{ .Values.milvus.port }}
+          volumeMounts:
+            - name: milvus-data
+              mountPath: /var/lib/milvus
+
+      volumes:
+        - name: etcd-data
+          emptyDir: {}
+        - name: minio-data
+          emptyDir: {}
+        - name: milvus-data
+          emptyDir: {}

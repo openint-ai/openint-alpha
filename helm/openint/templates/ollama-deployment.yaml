@@ -1,0 +1,59 @@
+{{- if and .Values.ollama .Values.ollama.enabled }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: openint-ollama
+  labels:
+    app: openint-ollama
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  serviceName: openint-ollama
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openint-ollama
+  template:
+    metadata:
+      labels:
+        app: openint-ollama
+    spec:
+      containers:
+        - name: ollama
+          image: "{{ .Values.ollama.image }}:{{ .Values.ollama.tag }}"
+          ports:
+            - containerPort: 11434
+          {{- if .Values.ollama.resources }}
+          resources:
+            {{- toYaml .Values.ollama.resources | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: ollama-data
+              mountPath: /root/.ollama
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: 11434
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - "sleep 5 && ollama pull {{ .Values.ollama.model }}"
+  volumeClaimTemplates:
+    - metadata:
+        name: ollama-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi
+{{- end }}

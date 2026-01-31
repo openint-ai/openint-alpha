@@ -1,0 +1,45 @@
+backend:
+  image: openint-backend
+  tag: latest
+  imagePullPolicy: Never  # Use local minikube images
+  replicas: 1
+  port: 3001
+  env:
+    MILVUS_HOST: openint-milvus
+    MILVUS_PORT: "19530"
+    NEO4J_URI: bolt://openint-neo4j:7687
+    NEO4J_USER: neo4j
+    NEO4J_PASSWORD: datahub1
+    REDIS_HOST: openint-redis
+    REDIS_PORT: "6379"
+    LOG_LEVEL: INFO
+
+ui:
+  image: openint-ui
+  tag: latest
+  imagePullPolicy: Never
+  replicas: 1
+  port: 80
+
+milvus:
+  image: milvusdb/milvus
+  tag: v2.3.3
+  port: 19530
+  etcd:
+    image: quay.io/coreos/etcd
+    tag: v3.5.5
+  minio:
+    image: minio/minio
+    tag: RELEASE.2023-03-20T20-16-18Z
+
+neo4j:
+  image: neo4j
+  tag: "5"
+  httpPort: 7474
+  boltPort: 7687
+  auth: neo4j/datahub1
+
+redis:
+  image: redis
+  tag: 7-alpine
+  port: 6379

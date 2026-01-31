@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openint-ui
+  labels:
+    app: openint-ui
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.ui.replicas }}
+  selector:
+    matchLabels:
+      app: openint-ui
+  template:
+    metadata:
+      labels:
+        app: openint-ui
+    spec:
+      containers:
+        - name: ui
+          image: "{{ .Values.ui.image }}:{{ .Values.ui.tag }}"
+          imagePullPolicy: {{ .Values.ui.imagePullPolicy }}
+          ports:
+            - containerPort: {{ .Values.ui.port }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.ui.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10

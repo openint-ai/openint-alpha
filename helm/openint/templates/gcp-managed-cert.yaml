@@ -1,0 +1,11 @@
+{{- if and .Values.ingress .Values.ingress.enabled .Values.ingress.managedCert }}
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: openint-managed-cert
+  labels:
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  domains:
+    - {{ .Values.ingress.host }}
+{{- end }}

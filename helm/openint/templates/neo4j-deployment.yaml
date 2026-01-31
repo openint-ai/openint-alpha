@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: openint-neo4j
+  labels:
+    app: openint-neo4j
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openint-neo4j
+  template:
+    metadata:
+      labels:
+        app: openint-neo4j
+    spec:
+      containers:
+        - name: neo4j
+          image: "{{ .Values.neo4j.image }}:{{ .Values.neo4j.tag }}"
+          ports:
+            - containerPort: {{ .Values.neo4j.httpPort }}
+            - containerPort: {{ .Values.neo4j.boltPort }}
+          env:
+            - name: NEO4J_AUTH
+              value: {{ .Values.neo4j.auth }}
+          volumeMounts:
+            - name: neo4j-data
+              mountPath: /data
+      volumes:
+        - name: neo4j-data
+          emptyDir: {}

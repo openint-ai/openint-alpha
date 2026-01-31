@@ -1,0 +1,27 @@
+{{- if and .Values.ingress .Values.ingress.enabled }}
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: openint-backend-config
+  labels:
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  healthCheck:
+    requestPath: /api/health
+    port: {{ .Values.backend.port }}
+    type: HTTP
+  timeoutSec: 300
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: openint-ui-config
+  labels:
+    {{- include "openint.labels" . | nindent 4 }}
+spec:
+  healthCheck:
+    requestPath: /
+    port: {{ .Values.ui.port }}
+    type: HTTP
+  timeoutSec: 30
+{{- end }}

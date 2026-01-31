@@ -1,0 +1,38 @@
+{{- if and .Values.ingress .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: openint-ingress
+  labels:
+    {{- include "openint.labels" . | nindent 4 }}
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: openint-ip
+    {{- if .Values.ingress.managedCert }}
+    networking.gke.io/managed-certificates: openint-managed-cert
+    {{- end }}
+    kubernetes.io/ingress.class: "gce"
+spec:
+  defaultBackend:
+    service:
+      name: openint-ui
+      port:
+        number: {{ .Values.ui.port }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: openint-backend
+                port:
+                  number: {{ .Values.backend.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: openint-ui
+                port:
+                  number: {{ .Values.ui.port }}
+{{- end }}
