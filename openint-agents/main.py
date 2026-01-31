@@ -54,12 +54,12 @@ def initialize_agents(orchestrator: Optional[AgentOrchestrator] = None):
     except Exception as e:
         print(f"⚠️  Graph agent not loaded: {e}")
 
-    # Initialize Schema Agent (sa-agent)
+    # Initialize Schema Generator Agent (sg-agent)
     try:
-        from sa_agent.schema_generator_agent import SchemaGeneratorAgent
-        sa_agent = SchemaGeneratorAgent()
-        agents_list.append(sa_agent)
-        print(f"✅ Initialized {sa_agent.name}")
+        from sg_agent.schema_generator_agent import SchemaGeneratorAgent
+        sg_agent = SchemaGeneratorAgent()
+        agents_list.append(sg_agent)
+        print(f"✅ Initialized {sg_agent.name}")
     except Exception as e:
         print(f"⚠️  Schema generator agent not loaded: {e}")
 

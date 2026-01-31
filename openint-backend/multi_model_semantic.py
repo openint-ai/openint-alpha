@@ -33,13 +33,16 @@ def _get_schema_for_semantics() -> Optional[Dict[str, Dict[str, Any]]]:
         # Backend root = parent of openint-backend
         backend_dir = Path(__file__).resolve().parent
         repo_root = backend_dir.parent
+        openint_agents = repo_root / "openint-agents"
         openint_datahub = repo_root / "openint-datahub"
         if str(repo_root) not in sys.path:
             sys.path.insert(0, str(repo_root))
         if str(backend_dir) not in sys.path:
             sys.path.insert(0, str(backend_dir))
+        if openint_agents.exists() and str(openint_agents) not in sys.path:
+            sys.path.insert(0, str(openint_agents))
         try:
-            from sa_agent.datahub_client import get_schema
+            from sg_agent.datahub_client import get_schema
             schema = get_schema()
             if schema:
                 return schema

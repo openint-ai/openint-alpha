@@ -1,5 +1,5 @@
 """
-Sentence generator for sa-agent.
+Sentence generator for sg-agent.
 Uses Ollama (open-source LLM) to generate banking, data, analytics, and regulatory
 example questions. Context comes from the DataHub catalog schema (datasets and fields).
 No template fallback.

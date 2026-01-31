@@ -1,6 +1,6 @@
 /**
  * Multi-Agent Demo
- * Flow: sa-agent (sentence) → sentiment-agent →
+ * Flow: sg-agent (sentence) → sentiment-agent →
  * parallel (vectordb-agent + graph-agent) → aggregator-agent (LLM answer).
  * Debug mode: A2A-style animation + LangGraph coordination. Agents can refine if answer not satisfactory.
  */
@@ -11,9 +11,9 @@ import { AnswerRenderer } from './AnswerRenderer';
 
 const STAGGER_MS = 380;
 
-type Phase = 'idle' | 'sa-agent' | 'sentiment-agent' | 'vectordb-agent' | 'graph-agent' | 'enrich-agent' | 'aggregator_agent' | 'done' | 'error';
+type Phase = 'idle' | 'sg-agent' | 'sentiment-agent' | 'vectordb-agent' | 'graph-agent' | 'enrich-agent' | 'aggregator_agent' | 'done' | 'error';
 
-const AGENT_ORDER: Phase[] = ['sa-agent', 'sentiment-agent', 'vectordb-agent', 'graph-agent', 'enrich-agent', 'aggregator_agent'];
+const AGENT_ORDER: Phase[] = ['sg-agent', 'sentiment-agent', 'vectordb-agent', 'graph-agent', 'enrich-agent', 'aggregator_agent'];
 
 /** Format ISO datetime for History pane: "Jan 30, 2025, 3:45 PM" or "Today, 3:45 PM". */
 function formatHistoryDateTime(iso: string): string {
@@ -137,7 +137,7 @@ export default function MultiAgentDemo() {
   /** Message we sent with the last run; used as fallback when backend doesn't return original_query */
   const lastRunMessageRef = useRef<string>('');
   const [luckyLoading, setLuckyLoading] = useState(false);
-  const [luckySource, setLuckySource] = useState<{ source: string; llm_model?: string; sa_agent_time_ms?: number } | null>(null);
+  const [luckySource, setLuckySource] = useState<{ source: string; llm_model?: string; sg_agent_time_ms?: number } | null>(null);
   /** Recent questions from Redis (History pane), with optional issued_at. */
   const [historyQueries, setHistoryQueries] = useState<MultiAgentHistoryEntry[]>([]);
 
@@ -158,7 +158,7 @@ export default function MultiAgentDemo() {
     setData(null);
     setSteps([]);
     setRevealedAgentTimes(new Set());
-    setPhase('sa-agent');
+    setPhase('sg-agent');
     const q = String(overrideMessage != null ? overrideMessage : message ?? '').trim();
     lastRunMessageRef.current = q;
     try {
@@ -190,7 +190,7 @@ export default function MultiAgentDemo() {
     try {
       const luckyData = await getLuckySuggestion();
       const sentence = luckyData.sentence?.trim();
-      const sgTimeMs = luckyData.sa_agent_time_ms ?? undefined;
+      const sgTimeMs = luckyData.sg_agent_time_ms ?? undefined;
       if (!sentence) {
         setLuckyLoading(false);
         return;
@@ -198,7 +198,7 @@ export default function MultiAgentDemo() {
       setLuckySource({
         source: luckyData.source ?? 'template',
         llm_model: luckyData.llm_model,
-        sa_agent_time_ms: sgTimeMs,
+        sg_agent_time_ms: sgTimeMs,
       });
       setMessage(sentence);
       lastRunWasLuckyRef.current = true;
@@ -206,22 +206,22 @@ export default function MultiAgentDemo() {
       staggerRef.current = [];
       setData(null);
       setError(null);
-      // Activate animation immediately: sa-agent done with same time as "Generated with …"
+      // Activate animation immediately: sg-agent done with same time as "Generated with …"
       setSteps([
         {
-          agent: 'sa-agent',
+          agent: 'sg-agent',
           action: 'use_lucky_sentence',
           status: 'completed',
           duration_ms: sgTimeMs,
           sentence: sentence.slice(0, 200),
         },
       ]);
-      setRevealedAgentTimes(new Set(['sa-agent']));
+      setRevealedAgentTimes(new Set(['sg-agent']));
       setPhase('sentiment-agent');
       lastRunMessageRef.current = sentence;
       const result = await runMultiAgentDemo(sentence, debug, {
         from_lucky: true,
-        sa_agent_time_ms: sgTimeMs,
+        sg_agent_time_ms: sgTimeMs,
       });
       setData(result);
       setSteps(result.steps || []);
@@ -293,7 +293,7 @@ export default function MultiAgentDemo() {
         <div className="min-w-0">
           <h1 className="text-xl font-semibold text-gray-900">Multi-Agent Demo</h1>
           <p className="text-xs text-gray-600 mt-0.5">
-            sa-agent → sentiment-agent → parallel (vectordb + graph) → aggregator-agent. LangGraph orchestrates.
+            sg-agent → sentiment-agent → parallel (vectordb + graph) → aggregator-agent. LangGraph orchestrates.
           </p>
         </div>
       </div>
@@ -351,7 +351,7 @@ export default function MultiAgentDemo() {
             onClick={handleLucky}
             disabled={isRunning || luckyLoading}
             className="shrink-0 px-4 py-2.5 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:pointer-events-none transition-colors whitespace-nowrap"
-            title="Get a random sentence from sa-agent and run the multi-agent demo"
+            title="Get a random sentence from sg-agent and run the multi-agent demo"
           >
             {luckyLoading ? '…' : "I'm feeling lucky!"}
           </button>
@@ -360,24 +360,24 @@ export default function MultiAgentDemo() {
           <p className="text-xs text-gray-500 flex items-center gap-1.5 mt-1" role="status">
             <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-gray-100 text-gray-400" aria-hidden>◇</span>
             Generated with <span className="font-medium text-gray-600">{luckySource.llm_model}</span>
-            {luckySource.sa_agent_time_ms != null && (
+            {luckySource.sg_agent_time_ms != null && (
               <span
                 className="text-gray-400 font-mono tabular-nums text-[11px]"
-                title={`sa-agent: ${luckySource.sa_agent_time_ms} ms`}
+                title={`sg-agent: ${luckySource.sg_agent_time_ms} ms`}
               >
-                · {luckySource.sa_agent_time_ms >= 1000
-                  ? `${(luckySource.sa_agent_time_ms / 1000).toFixed(1)}s`
-                  : `${luckySource.sa_agent_time_ms}ms`}
+                · {luckySource.sg_agent_time_ms >= 1000
+                  ? `${(luckySource.sg_agent_time_ms / 1000).toFixed(1)}s`
+                  : `${luckySource.sg_agent_time_ms}ms`}
               </span>
             )}
           </p>
         )}
 
-        {/* Retrieval query (sa-agent: LLM-improved question for vector + graph) — manual run only */}
+        {/* Retrieval query (sg-agent: LLM-improved question for vector + graph) — manual run only */}
         {data?.success && data?.sentence && !lastRunWasLuckyRef.current && (
           <div className="mt-3 rounded-xl border border-slate-200 bg-slate-800 shadow-sm overflow-hidden">
             <div className="px-4 py-2 border-b border-slate-600 bg-slate-700/50">
-              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Retrieval query (sa-agent)</p>
+              <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Retrieval query (sg-agent)</p>
             </div>
             <pre className="p-4 text-xs font-mono text-slate-200 leading-relaxed overflow-x-auto whitespace-pre-wrap break-words">
               {String(data.sentence ?? '').trim()}
@@ -406,7 +406,7 @@ export default function MultiAgentDemo() {
                   <span className="text-[10px] font-medium uppercase tracking-wider text-amber-700/90">LangGraph</span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-center">
-                  <LangGraphNode label="select_agents" active={currentPhase === 'sa-agent'} done={steps.length > 0} />
+                  <LangGraphNode label="select_agents" active={currentPhase === 'sg-agent'} done={steps.length > 0} />
                   <LangGraphArrow active={isRunning} />
                   <LangGraphNode label="run_agents" active={isRunning} done={phase === 'done' || phase === 'error'} />
                   <LangGraphArrow active={isRunning} />
@@ -419,16 +419,16 @@ export default function MultiAgentDemo() {
                 <AgentHeroIcon className="w-10 h-10 text-brand-500" />
               </div>
               <AgentCard
-                agent="sa-agent"
-                name="sa-agent"
+                agent="sg-agent"
+                name="sg-agent"
                 desc="Sentence"
                 step={(() => {
-                  const sgStep = steps.find((s) => s.agent === 'sa-agent');
-                  if (lastRunWasLuckyRef.current && luckySource?.sa_agent_time_ms != null && sgStep)
-                    return { ...sgStep, duration_ms: luckySource.sa_agent_time_ms };
+                  const sgStep = steps.find((s) => s.agent === 'sg-agent');
+                  if (lastRunWasLuckyRef.current && luckySource?.sg_agent_time_ms != null && sgStep)
+                    return { ...sgStep, duration_ms: luckySource.sg_agent_time_ms };
                   return sgStep;
                 })()}
-                showTime={revealedAgentTimes.has('sa-agent')}
+                showTime={revealedAgentTimes.has('sg-agent')}
               />
               <AnimatedConnector active={isRunning} color="violet" />
               <AgentCard agent="sentiment-agent" name="sentiment-agent" desc="Sentiment" step={steps.find((s) => s.agent === 'sentiment-agent')} showTime={revealedAgentTimes.has('sentiment-agent')} />
@@ -490,7 +490,7 @@ export default function MultiAgentDemo() {
                   </div>
                   <div className="rounded-xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50 to-emerald-50/50 p-4 shadow-sm">
                     <div className="flex items-baseline justify-between gap-2 mb-2">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Generated (sa-agent)</span>
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-emerald-700">Generated (sg-agent)</span>
                       {generatedDisplay.length > 0 && (
                         <span className="text-[10px] font-mono text-emerald-600/80 tabular-nums">{generatedDisplay.length} ch</span>
                       )}
@@ -852,7 +852,7 @@ const AGENT_STYLES: Record<
   string,
   { idle: string; active: string; done: string; failed: string; badge: string; badgeDone: string; time: string }
 > = {
-  'sa-agent': {
+  'sg-agent': {
     idle: 'border-violet-200 bg-white',
     active: 'border-violet-500 bg-violet-50 shadow shadow-violet-200/40',
     done: 'border-violet-400 bg-violet-50/90',
@@ -925,7 +925,7 @@ function AgentCard({
   const active = status === 'running';
   const done = status === 'completed';
   const failed = status === 'failed';
-  const styles = AGENT_STYLES[agent] ?? AGENT_STYLES['sa-agent'];
+  const styles = AGENT_STYLES[agent] ?? AGENT_STYLES['sg-agent'];
   const boxClass = active ? styles.active : failed ? styles.failed : done ? styles.done : styles.idle;
   const badgeClass = active ? `${styles.badge} animate-pulse` : done ? styles.badgeDone : failed ? 'bg-rose-500 text-white' : 'bg-gray-200 text-gray-600';
   const shortName = name.replace(/-agent$/, '') || name;
@@ -940,7 +940,7 @@ function AgentCard({
           ? '📋'
           : agent === 'enrich-agent'
             ? <EnrichAgentIcon className="w-3.5 h-3.5" />
-            : agent === 'sa-agent'
+            : agent === 'sg-agent'
               ? '✏️'
               : null;
   return (

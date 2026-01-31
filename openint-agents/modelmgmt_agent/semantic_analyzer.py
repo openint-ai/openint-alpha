@@ -26,7 +26,7 @@ except ImportError:
 
 
 def _get_schema_for_semantics() -> Optional[Dict[str, Dict[str, Any]]]:
-    """Get dataset schema from DataHub (sa-agent) or openint-datahub/schemas.py. Returns None if unavailable."""
+    """Get dataset schema from DataHub (sg-agent) or openint-datahub/schemas.py. Returns None if unavailable."""
     try:
         modelmgmt_agent_dir = Path(__file__).resolve().parent
         agents_root = modelmgmt_agent_dir.parent
@@ -35,7 +35,7 @@ def _get_schema_for_semantics() -> Optional[Dict[str, Dict[str, Any]]]:
         if str(agents_root) not in sys.path:
             sys.path.insert(0, str(agents_root))
         try:
-            from sa_agent.datahub_client import get_schema
+            from sg_agent.datahub_client import get_schema
             schema = get_schema()
             if schema:
                 return schema

@@ -44,7 +44,7 @@ REDIS_HOST=127.0.0.1
 REDIS_PORT=6379
 # MILVUS_HOST=...
 # NEO4J_URI=...
-# OLLAMA_HOST=...   # if using sa-agent sentence generation
+# OLLAMA_HOST=...   # if using sg-agent sentence generation
 ```
 
 If Redis/Milvus/Neo4j run on the same EC2, use `127.0.0.1` or `localhost`. If they run elsewhere, set the host/IP and ensure the EC2 security group allows outbound access to those ports.

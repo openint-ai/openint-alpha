@@ -1,7 +1,7 @@
 """
 A2A (Agent-to-Agent) protocol support — Google's A2A spec.
 All agent communication in this project uses A2A (Agent Card + message/send).
-Exposes sa-agent, modelmgmt-agent, search_agent, and graph_agent as A2A servers.
+Exposes sg-agent, modelmgmt-agent, search_agent, and graph_agent as A2A servers.
 """
 
 import json
@@ -34,11 +34,11 @@ def _base_url() -> str:
 
 # --- A2A types (minimal subset of spec) ---
 
-def _agent_card_sa_agent() -> Dict[str, Any]:
+def _agent_card_sg_agent() -> Dict[str, Any]:
     return {
-        "name": "Sentence Generation Agent (sa-agent)",
+        "name": "Sentence Generation Agent (sg-agent)",
         "description": "Generates natural-language example sentences for banking, analytics, and regulatory use cases. Uses DataHub schema and an LLM (Ollama) to produce questions that real users would ask.",
-        "url": f"{_base_url()}/api/a2a/agents/sa-agent",
+        "url": f"{_base_url()}/api/a2a/agents/sg-agent",
         "version": "1.0.0",
         "capabilities": {"streaming": False, "pushNotifications": False},
         "defaultInputModes": ["application/json", "text/plain"],
@@ -142,7 +142,7 @@ def _agent_card_enrich_agent() -> Dict[str, Any]:
 def _agent_card_sentiment_agent() -> Dict[str, Any]:
     return {
         "name": "Sentiment Agent (sentiment-agent)",
-        "description": "Analyzes the sentiment/tone of a sentence or question via LLM. Returns sentiment label, confidence, and emoji. Used after sa-agent in the multi-agent demo.",
+        "description": "Analyzes the sentiment/tone of a sentence or question via LLM. Returns sentiment label, confidence, and emoji. Used after sg-agent in the multi-agent demo.",
         "url": f"{_base_url()}/api/a2a/agents/sentiment-agent",
         "version": "1.0.0",
         "capabilities": {"streaming": False, "pushNotifications": False},
@@ -163,7 +163,7 @@ def _agent_card_sentiment_agent() -> Dict[str, Any]:
 def get_agent_card(agent_id: str) -> Optional[Dict[str, Any]]:
     """Return A2A Agent Card for agent_id, or None if unknown."""
     cards = {
-        "sa-agent": _agent_card_sa_agent,
+        "sg-agent": _agent_card_sg_agent,
         "modelmgmt-agent": _agent_card_modelmgmt_agent,
         "search_agent": _agent_card_search_agent,
         "graph_agent": _agent_card_graph_agent,
@@ -239,6 +239,74 @@ def _normalize_ids_to_10_digits(text: str) -> str:
     return text
 
 
+def _extract_original_from_prompt(prompt: str) -> str:
+    """Extract original user query from prompt (between --- and ---)."""
+    import re
+    m = re.search(r"---\s*\n(.*?)\n\s*---", prompt, re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
+def _restore_ssn_from_original(prompt: str, reply: str) -> str:
+    """
+    Restore SSN (XXX-XX-XXXX) from original user query into the LLM reply.
+    The LLM sometimes corrupts SSNs (e.g. 432-10-8327 -> 432-10827).
+    """
+    import re
+    if not reply or not prompt:
+        return reply
+    original = _extract_original_from_prompt(prompt)
+    if not original:
+        return reply
+    ssn_list = re.findall(r"\d{3}-\d{2}-\d{4}", original)
+    if not ssn_list:
+        return reply
+    ssn = ssn_list[0]
+    pat = re.compile(
+        r"(\b(?:ssn|social\s*security)\s*[:\.]?\s*)([\d\-\.]{6,15})",
+        re.IGNORECASE,
+    )
+    def repl(match):
+        prefix, value = match.group(1), match.group(2)
+        if value == ssn:
+            return match.group(0)
+        return prefix + ssn
+    return pat.sub(repl, reply)
+
+
+def _restore_phone_from_original(prompt: str, reply: str) -> str:
+    """
+    Restore phone/mobile/cell/telephone numbers from original user query into the LLM reply.
+    Matches after mobile, phone, telephone, cell, tel. Phone formats: XXX-XXX-XXXX, (XXX) XXX-XXXX, etc.
+    """
+    import re
+    if not reply or not prompt:
+        return reply
+    original = _extract_original_from_prompt(prompt)
+    if not original:
+        return reply
+    phone_keywords = re.compile(
+        r"\b(?:mobile|phone|telephone|cell|tel|contact)\s*[:\.]?\s*([\d\-\.\(\)\s]{10,20})",
+        re.IGNORECASE,
+    )
+    matches = phone_keywords.findall(original)
+    if not matches:
+        return reply
+    phone = matches[0].strip()
+    if not phone or len("".join(c for c in phone if c.isdigit())) < 10:
+        return reply
+    # Match same keywords in reply followed by a value (possibly corrupted)
+    pat = re.compile(
+        r"(\b(?:mobile|phone|telephone|cell|tel|contact)\s*[:\.]?\s*)([\d\-\.\(\)\s]{8,25})",
+        re.IGNORECASE,
+    )
+    def repl(match):
+        prefix, value = match.group(1), match.group(2)
+        if value.strip() == phone:
+            return match.group(0)
+        return prefix + phone
+    return pat.sub(repl, reply)
+
+
 def _sg_agent_fix_or_generate_via_ollama(prompt: str) -> Optional[str]:
     """Call Ollama with the given prompt; return the model reply (single improved/generated sentence) or None."""
     import os
@@ -267,7 +335,7 @@ def _sg_agent_fix_or_generate_via_ollama(prompt: str) -> Optional[str]:
         content = (data.get("message") or {}).get("content") or ""
         return content.strip() if content else None
     except Exception as e:
-        logger.warning("sa-agent Ollama fix/generate call failed: %s", e)
+        logger.warning("sg-agent Ollama fix/generate call failed: %s", e)
         return None
 
 
@@ -294,9 +362,9 @@ def _is_llm_refusal(reply: str) -> bool:
     return any(p in r for p in refusal_phrases)
 
 
-def handle_sa_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
+def handle_sg_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
     """
-    A2A message/send for sa-agent. Params: { message: Message }.
+    A2A message/send for sg-agent. Params: { message: Message }.
     - If message is a "fix/improve user sentence" request (multi-agent-demo): call Ollama with that prompt and return the improved sentence.
     - Else (e.g. "Generate 3 sentences"): generate sentences from schema, return Task with artifacts.
     """
@@ -324,11 +392,13 @@ def handle_sa_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         if reply and _is_llm_refusal(reply):
             reply = None
         if reply:
+            reply = _restore_ssn_from_original(text, reply)
+            reply = _restore_phone_from_original(text, reply)
             reply = _normalize_ids_to_10_digits(reply)
             artifacts = [{
                 "artifactId": str(uuid.uuid4()),
                 "name": "improved_or_generated_sentence",
-                "description": "Single sentence from sa-agent (fix/context or generated)",
+                "description": "Single sentence from sg-agent (fix/context or generated)",
                 "parts": [{"kind": "text", "text": reply}],
             }]
             return _make_task(task_id, context_id, "completed", artifacts=artifacts)
@@ -344,8 +414,8 @@ def handle_sa_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         if m:
             count = min(10, max(1, int(m.group(1))))
     try:
-        from sa_agent.datahub_client import get_schema_and_source
-        from sa_agent.sentence_generator import generate_sentences
+        from sg_agent.datahub_client import get_schema_and_source
+        from sg_agent.sentence_generator import generate_sentences
         schema, schema_source = get_schema_and_source()
         if not schema:
             return _make_task(
@@ -356,14 +426,14 @@ def handle_sa_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         # Fallback to template sentences when Ollama fails (same as Compare "I'm feeling lucky")
         if not sentences_list and schema:
             try:
-                from sa_agent.sentence_generator import _generate_templates
+                from sg_agent.sentence_generator import _generate_templates
                 templates = _generate_templates(schema)
                 if templates:
                     sentences_list = templates[:count]
                     error_msg = None
-                    logger.info("sa-agent A2A: using template fallback (%s sentences)", len(sentences_list))
+                    logger.info("sg-agent A2A: using template fallback (%s sentences)", len(sentences_list))
             except Exception as tb:
-                logger.debug("sa-agent A2A template fallback failed: %s", tb)
+                logger.debug("sg-agent A2A template fallback failed: %s", tb)
         if error_msg and not sentences_list:
             return _make_task(
                 task_id, context_id, "failed",
@@ -381,12 +451,12 @@ def handle_sa_agent_message_send(params: Dict[str, Any]) -> Dict[str, Any]:
         artifacts = [{
             "artifactId": str(uuid.uuid4()),
             "name": "generated_sentences",
-            "description": f"{len(parts)} example sentence(s) from sa-agent",
+            "description": f"{len(parts)} example sentence(s) from sg-agent",
             "parts": parts,
         }]
         return _make_task(task_id, context_id, "completed", artifacts=artifacts)
     except Exception as e:
-        logger.exception("sa-agent A2A message/send failed")
+        logger.exception("sg-agent A2A message/send failed")
         return _make_task(
             task_id, context_id, "failed",
             message_parts=[{"kind": "text", "text": str(e)}],
@@ -609,8 +679,8 @@ def handle_json_rpc(body: bytes, agent_id: str) -> tuple[Dict[str, Any], int]:
             "id": rpc_id,
             "error": {"code": -32601, "message": f"Method not supported: {method}"},
         }, 200
-    if agent_id == "sa-agent":
-        result = handle_sa_agent_message_send(params)
+    if agent_id == "sg-agent":
+        result = handle_sg_agent_message_send(params)
     elif agent_id == "modelmgmt-agent":
         result = handle_modelmgmt_agent_message_send(params)
     elif agent_id == "sentiment-agent":

@@ -1,13 +1,13 @@
 /**
  * A2A — Agent-to-Agent (Google A2A protocol)
- * sa-agent generates sentences → modelmgmt-agent annotates them.
+ * sg-agent generates sentences → modelmgmt-agent annotates them.
  * Shows A2A flow animation and results.
  */
 
 import { useState, useCallback } from 'react';
 import { runA2A, type A2ARunResponse, type A2AAnnotationItem } from '../api';
 
-type Phase = 'idle' | 'sa-agent' | 'modelmgmt-agent' | 'done' | 'error';
+type Phase = 'idle' | 'sg-agent' | 'modelmgmt-agent' | 'done' | 'error';
 
 export default function A2A() {
   const [sentenceCount, setSentenceCount] = useState(3);
@@ -18,9 +18,9 @@ export default function A2A() {
   const run = useCallback(async () => {
     setError(null);
     setData(null);
-    setPhase('sa-agent');
+    setPhase('sg-agent');
     try {
-      // Simulate step visibility: sa-agent runs first
+      // Simulate step visibility: sg-agent runs first
       const t1 = setTimeout(() => setPhase('modelmgmt-agent'), 800);
       const result = await runA2A(sentenceCount);
       clearTimeout(t1);
@@ -33,13 +33,13 @@ export default function A2A() {
     }
   }, [sentenceCount]);
 
-  const isRunning = phase === 'sa-agent' || phase === 'modelmgmt-agent';
+  const isRunning = phase === 'sg-agent' || phase === 'modelmgmt-agent';
 
   return (
     <div className="w-full max-w-[90rem] mx-auto px-1">
       <h1 className="text-xl font-semibold text-gray-900 mb-1">A2A — Agent-to-Agent</h1>
       <p className="text-sm text-gray-600 mb-6">
-        Google&apos;s A2A protocol: <strong>sa-agent</strong> generates example sentences from DataHub schema; <strong>modelmgmt-agent</strong> annotates them with semantic tags. Watch the flow below.
+        Google&apos;s A2A protocol: <strong>sg-agent</strong> generates example sentences from DataHub schema; <strong>modelmgmt-agent</strong> annotates them with semantic tags. Watch the flow below.
       </p>
 
       <div className="rounded-xl border border-surface-200 bg-white shadow-sm p-6 mb-6">
@@ -89,11 +89,11 @@ export default function A2A() {
             </span>
           </div>
           <div className="flex items-center gap-2 flex-wrap justify-center">
-            <LangGraphNode label="select_agents" active={phase === 'sa-agent'} done={phase !== 'idle'} />
+            <LangGraphNode label="select_agents" active={phase === 'sg-agent'} done={phase !== 'idle'} />
             <LangGraphArrow active={phase !== 'idle'} />
             <LangGraphNode
               label="run_agents"
-              active={phase === 'sa-agent' || phase === 'modelmgmt-agent'}
+              active={phase === 'sg-agent' || phase === 'modelmgmt-agent'}
               done={phase === 'done' || phase === 'error'}
             />
             <LangGraphArrow active={phase !== 'idle'} />
@@ -105,19 +105,19 @@ export default function A2A() {
         <div className="flex items-center justify-center gap-4 py-8 px-4 bg-gray-50/80 rounded-xl border border-surface-200">
           <div className="flex flex-col items-center gap-0">
             <AgentCard
-              agent="sa-agent"
-              name="sa-agent"
+              agent="sg-agent"
+              name="sg-agent"
               description="Sentence generation"
-              active={phase === 'sa-agent'}
-              done={phase !== 'idle' && phase !== 'sa-agent'}
-              timeMs={data?.sa_agent_time_ms ?? null}
+              active={phase === 'sg-agent'}
+              done={phase !== 'idle' && phase !== 'sg-agent'}
+              timeMs={data?.sg_agent_time_ms ?? null}
             />
             {phase !== 'idle' && (
               <>
                 <div className="flex justify-center w-full py-0.5" aria-hidden>
                   <div className="w-px min-h-[10px] bg-violet-300 rounded-full" />
                 </div>
-                <SaAgentSubFlow active={phase === 'sa-agent'} />
+                <SgAgentSubFlow active={phase === 'sg-agent'} />
               </>
             )}
           </div>
@@ -159,9 +159,9 @@ export default function A2A() {
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch lg:gap-0">
                   {/* Sentence + wedge grouped so wedge apex aligns with sentence center */}
                   <div className="hidden lg:flex shrink-0 items-stretch w-full lg:w-auto">
-                    {/* Generated sentence (sa-agent) */}
+                    {/* Generated sentence (sg-agent) */}
                     <div className="shrink-0 w-80 xl:w-96 rounded-l-lg border border-slate-200 bg-slate-50/80 border-l-4 border-l-blue-400 px-4 py-3 border-r-0 rounded-r-none">
-                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Generated sentence (sa-agent)</p>
+                      <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Generated sentence (sg-agent)</p>
                       <p className="text-sm text-slate-800 leading-snug">{sent.text}</p>
                       {sent.category && (
                         <span className="inline-block mt-2 text-[10px] text-slate-600 bg-slate-200/80 px-1.5 py-0.5 rounded">
@@ -176,7 +176,7 @@ export default function A2A() {
                   </div>
                   {/* Mobile: sentence only (no wedge) */}
                   <div className="lg:hidden w-full rounded-lg border border-slate-200 bg-slate-50/80 border-l-4 border-l-blue-400 px-4 py-3">
-                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Generated sentence (sa-agent)</p>
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider mb-1">Generated sentence (sg-agent)</p>
                     <p className="text-sm text-slate-800 leading-snug">{sent.text}</p>
                     {sent.category && (
                       <span className="inline-block mt-2 text-[10px] text-slate-600 bg-slate-200/80 px-1.5 py-0.5 rounded">
@@ -202,8 +202,8 @@ export default function A2A() {
   );
 }
 
-/** sa-agent sub-flow: DataHub (schema context) → Ollama (sentence generation). Retained after run. */
-function SaAgentSubFlow({ active }: { active?: boolean }) {
+/** sg-agent sub-flow: DataHub (schema context) → Ollama (sentence generation). Retained after run. */
+function SgAgentSubFlow({ active }: { active?: boolean }) {
   return (
     <div className={`flex items-center gap-2 w-full max-w-[200px] min-h-[52px] rounded-lg border px-3 py-2 transition-colors ${active ? 'border-violet-300 bg-violet-50/90' : 'border-violet-200 bg-violet-50/60'}`}>
       <SubFlowStep
@@ -326,7 +326,7 @@ function formatTimeMs(ms: number | null | undefined): string | null {
   return `${Math.round(ms)} ms`;
 }
 
-const SA_AGENT_STYLES = {
+const SG_AGENT_STYLES = {
   idle: 'border-violet-200 bg-white',
   active: 'border-violet-500 bg-violet-50 shadow-md shadow-violet-200/50 scale-105',
   done: 'border-violet-400 bg-violet-50/90',
@@ -352,14 +352,14 @@ function AgentCard({
   done,
   timeMs,
 }: {
-  agent: 'sa-agent' | 'modelmgmt-agent';
+  agent: 'sg-agent' | 'modelmgmt-agent';
   name: string;
   description: string;
   active: boolean;
   done: boolean;
   timeMs: number | null;
 }) {
-  const styles = agent === 'sa-agent' ? SA_AGENT_STYLES : MODELMGMT_AGENT_STYLES;
+  const styles = agent === 'sg-agent' ? SG_AGENT_STYLES : MODELMGMT_AGENT_STYLES;
   const boxClass = active ? styles.active : done ? styles.done : styles.idle;
   const badgeClass = active ? styles.badge + ' animate-pulse' : done ? styles.badgeDone : 'bg-gray-200 text-gray-600';
   const timeStr = formatTimeMs(timeMs);
@@ -369,7 +369,7 @@ function AgentCard({
       className={`flex flex-col items-center justify-center rounded-xl border-2 px-6 py-5 min-w-[180px] transition-all duration-300 ${boxClass}`}
     >
       <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold mb-2 ${badgeClass}`}>
-        {agent === 'sa-agent' ? 'SA' : 'MM'}
+        {agent === 'sg-agent' ? 'SG' : 'MM'}
       </div>
       <span className="text-sm font-semibold text-gray-800">{name}</span>
       <span className="text-[10px] text-gray-500 mt-0.5">{description}</span>

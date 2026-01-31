@@ -166,7 +166,15 @@ def row_to_metadata(row: pd.Series, table_name: str) -> Dict[str, Any]:
         "total_chunks": 0,
         "original_id": ""
     }
-    
+    # Bank support: customer_id and status for vector search filtering (e.g. "status of customer X")
+    if "customer_id" in row and pd.notna(row["customer_id"]):
+        metadata["customer_id"] = _normalize_id_for_vector(row["customer_id"])
+    if "account_status" in row and pd.notna(row["account_status"]):
+        metadata["status"] = str(row["account_status"])[:50]
+    elif "status" in row and pd.notna(row["status"]):
+        metadata["status"] = str(row["status"])[:50]
+    elif "dispute_status" in row and pd.notna(row["dispute_status"]):
+        metadata["status"] = str(row["dispute_status"])[:50]
     return metadata
 
 

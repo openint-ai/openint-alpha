@@ -1,6 +1,6 @@
 # Enrich Agent
 
-Extracts customer_id, transaction_id, dispute_id from **trusted sources only** (graph-agent rows, vectordb-agent results) and enriches them via Neo4j. Does not use the user query or sa-agent sentence to avoid hallucinated IDs.
+Extracts customer_id, transaction_id, dispute_id from **trusted sources only** (graph-agent rows, vectordb-agent results) and enriches them via Neo4j. Does not use the user query or sg-agent sentence to avoid hallucinated IDs.
 
 ## Capabilities
 
@@ -10,12 +10,12 @@ Extracts customer_id, transaction_id, dispute_id from **trusted sources only** (
 
 1. **Graph rows** (primary): Explicit `customer_id`, `transaction_id`, `dispute_id` columns from graph-agent's Neo4j query results. Source of truth.
 2. **Vector results** (secondary): Content from VectorDB agent's Milvus search. Real indexed documents.
-3. **Excluded**: User query and sa-agent sentence—these can contain example or incorrect IDs.
+3. **Excluded**: User query and sg-agent sentence—these can contain example or incorrect IDs.
 
 ## Flow
 
 ```
-sa-agent (sentence) → sentiment-agent → [vectordb-agent | graph-agent] (parallel)
+sg-agent (sentence) → sentiment-agent → [vectordb-agent | graph-agent] (parallel)
                                                     ↓
                                             enrich-agent
                                     (extracts IDs from graph_rows + vector_results only,

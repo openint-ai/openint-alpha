@@ -1,5 +1,5 @@
 """
-Schema service for sa-agent (standalone / programmatic use).
+Schema service for sg-agent (standalone / programmatic use).
 Gets schema from DataHub or openint-datahub (with optional Redis cache),
 generates example sentences via Ollama, and filters by hint.
 """
@@ -7,8 +7,8 @@ generates example sentences via Ollama, and filters by hint.
 import logging
 from typing import Dict, List, Any, Optional
 
-from sa_agent.datahub_client import get_schema_and_source
-from sa_agent.sentence_generator import generate_sentences
+from sg_agent.datahub_client import get_schema_and_source
+from sg_agent.sentence_generator import generate_sentences
 
 # Use shared agent state store (Redis) for schema cache
 from communication.agent_state_store import (
@@ -19,7 +19,7 @@ from communication.agent_state_store import (
 )
 
 logger = logging.getLogger(__name__)
-AGENT_NAME = "sa-agent"
+AGENT_NAME = "sg-agent"
 
 _schema_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
@@ -29,7 +29,7 @@ def get_schema() -> Dict[str, Dict[str, Any]]:
     if state_store_available():
         cached = get_agent_state(AGENT_NAME, "schema")
         if cached is not None and isinstance(cached, dict):
-            logger.debug("sa-agent: schema loaded from Redis (%s datasets)", len(cached))
+            logger.debug("sg-agent: schema loaded from Redis (%s datasets)", len(cached))
             return cached
     global _schema_cache
     if _schema_cache is not None:

@@ -4,9 +4,9 @@ Analyzes the sentiment/tone of a sentence or question via LLM (Ollama).
 
 ## Flow
 
-Runs after **sa-agent** in the multi-agent demo:
-1. User types a sentence or sa-agent generates one
-2. sa-agent may fix/improve the sentence
+Runs after **sg-agent** in the multi-agent demo:
+1. User types a sentence or sg-agent generates one
+2. sg-agent may fix/improve the sentence
 3. **sentiment-agent** analyzes the final sentence and returns sentiment, confidence, and emoji
 
 ## Usage

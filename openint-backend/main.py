@@ -271,17 +271,17 @@ orchestrator: Optional[Any] = None
 _agent_instances: List[Any] = []
 if AGENT_SYSTEM_AVAILABLE:
     try:
-        from agents.search_agent import SearchAgent
-        from agents.graph_agent import GraphAgent
-        from sa_agent.schema_generator_agent import SchemaGeneratorAgent
+        from vectordb_agent.vectordb_agent import VectorDBAgent
+        from graphdb_agent.graphdb_agent import GraphdbAgent
+        from sg_agent.schema_generator_agent import SchemaGeneratorAgent
         from modelmgmt_agent.modelmgmt_agent import ModelMgmtAgent
         from enrich_agent.enrich_agent import EnrichAgent
-        search_agent = SearchAgent()
+        search_agent = VectorDBAgent()
         _agent_instances.append(search_agent)
-        graph_agent = GraphAgent()
+        graph_agent = GraphdbAgent()
         _agent_instances.append(graph_agent)
-        sa_agent = SchemaGeneratorAgent()
-        _agent_instances.append(sa_agent)
+        sg_agent = SchemaGeneratorAgent()
+        _agent_instances.append(sg_agent)
         modelmgmt_agent = ModelMgmtAgent()
         _agent_instances.append(modelmgmt_agent)
         try:
@@ -290,6 +290,9 @@ if AGENT_SYSTEM_AVAILABLE:
         except Exception as e:
             logger.info("enrich-agent not loaded: %s", e)
         agent_instances_map = {a.name: a for a in _agent_instances}
+        # A2A handlers expect search_agent and graph_agent; add aliases for enrich-agent and invoke_agent_via_a2a
+        agent_instances_map["search_agent"] = search_agent
+        agent_instances_map["graph_agent"] = graph_agent
         agent_runner = None
         try:
             import a2a as _a2a
@@ -836,7 +839,7 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
         if orchestrator and hasattr(orchestrator, 'registry'):
             agents = orchestrator.registry.list_agents()
             for agent_info in agents:
-                if agent_info.name == "search_agent":
+                if agent_info.name in ("search_agent", "vectordb-agent"):
                     # Try to access the agent's milvus_client
                     # For now, create a temporary client
                     break
@@ -1904,7 +1907,7 @@ def a2a_agent_json_rpc(agent_id):
 @app.route('/api/a2a/run', methods=['POST'])
 def a2a_run():
     """
-    Run A2A flow: sa-agent generates sentences → modelmgmt-agent annotates each.
+    Run A2A flow: sg-agent generates sentences → modelmgmt-agent annotates each.
     Body: { "sentence_count": 3 } (optional, default 3).
     Returns: { "success", "steps", "sentences", "annotations", "error" }.
     """
@@ -1926,16 +1929,16 @@ def a2a_run():
         datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
         if os.path.isdir(datahub_path) and datahub_path not in sys.path:
             sys.path.insert(0, datahub_path)
-        from a2a import handle_sa_agent_message_send, handle_modelmgmt_agent_message_send
-        # Step 1: sa-agent — generate sentences via A2A message/send
-        steps.append({"agent": "sa-agent", "action": "generate", "status": "running"})
+        from a2a import handle_sg_agent_message_send, handle_modelmgmt_agent_message_send
+        # Step 1: sg-agent — generate sentences via A2A message/send
+        steps.append({"agent": "sg-agent", "action": "generate", "status": "running"})
         t0_sg = time.perf_counter()
         msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": f"Generate {sentence_count} sentences"}], "messageId": "a2a-run-1", "kind": "message"}}
-        task_sg = handle_sa_agent_message_send(msg)
-        sa_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
+        task_sg = handle_sg_agent_message_send(msg)
+        sg_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
         if task_sg.get("status", {}).get("state") == "failed":
             steps[-1]["status"] = "failed"
-            err_detail = "sa-agent failed to generate sentences"
+            err_detail = "sg-agent failed to generate sentences"
             msg = task_sg.get("status", {}).get("message") or {}
             for part in msg.get("parts") or []:
                 if part.get("kind") == "text" and part.get("text"):
@@ -1946,7 +1949,7 @@ def a2a_run():
                 "steps": steps,
                 "sentences": [],
                 "annotations": [],
-                "sa_agent_time_ms": sa_agent_time_ms,
+                "sg_agent_time_ms": sg_agent_time_ms,
                 "error": err_detail,
             }), 503
         steps[-1]["status"] = "completed"
@@ -1956,7 +1959,7 @@ def a2a_run():
                 if p.get("kind") == "text" and p.get("text"):
                     sentences.append({"text": p["text"], "category": p.get("metadata", {}).get("category", "Analyst")})
         if not sentences:
-            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "sa_agent_time_ms": sa_agent_time_ms, "error": "No sentences from sa-agent"}), 503
+            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "sg_agent_time_ms": sg_agent_time_ms, "error": "No sentences from sg-agent"}), 503
         # Step 2: modelmgmt-agent — annotate each sentence via A2A message/send
         steps.append({"agent": "modelmgmt-agent", "action": "annotate", "status": "running", "count": len(sentences)})
         t0_mm = time.perf_counter()
@@ -1978,7 +1981,7 @@ def a2a_run():
             "steps": steps,
             "sentences": sentences,
             "annotations": annotations,
-            "sa_agent_time_ms": sa_agent_time_ms,
+            "sg_agent_time_ms": sg_agent_time_ms,
             "modelmgmt_agent_time_ms": modelmgmt_agent_time_ms,
         })
     except Exception as e:
@@ -1990,7 +1993,7 @@ def a2a_run():
             "steps": steps,
             "sentences": sentences,
             "annotations": annotations,
-            "sa_agent_time_ms": None,
+            "sg_agent_time_ms": None,
             "modelmgmt_agent_time_ms": None,
             "error": str(e),
         }), 500
@@ -2009,7 +2012,7 @@ def _sentiment_fallback_local(text: str) -> dict:
 
 
 def _sanitize_sentence_fallback(text: str) -> str:
-    """Light sanitization when sa-agent/Ollama fails: remove profanity, normalize whitespace."""
+    """Light sanitization when sg-agent/Ollama fails: remove profanity, normalize whitespace."""
     if not text or not isinstance(text, str):
         return text or ""
     import re
@@ -2026,7 +2029,7 @@ def _sanitize_sentence_fallback(text: str) -> str:
 @app.route('/api/multi_agent_demo/run', methods=['GET', 'POST', 'OPTIONS'], strict_slashes=False)
 def multi_agent_demo_run():
     """
-    Multi-Agent Demo: sa-agent → modelmgmt → parallel (vectordb + graph) → aggregator-agent.
+    Multi-Agent Demo: sg-agent → modelmgmt → parallel (vectordb + graph) → aggregator-agent.
     Body: { "message": "user question", "debug": boolean }.
     Returns: { success, answer, steps, sentence, ... }.
     """
@@ -2043,7 +2046,7 @@ def multi_agent_demo_run():
     message = (data.get("message") or "").strip()
     debug = data.get("debug", False)
     from_lucky = data.get("from_lucky", False)
-    sa_agent_time_ms_from_client = data.get("sa_agent_time_ms") or data.get("sg_agent_time_ms")
+    sg_agent_time_ms_from_client = data.get("sg_agent_time_ms") or data.get("sa_agent_time_ms")
     if from_lucky and not message:
         return jsonify({"success": False, "error": "Missing 'message' in request (from_lucky requires the lucky sentence)"}), 400
     steps = []
@@ -2062,30 +2065,31 @@ def multi_agent_demo_run():
         datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
         if os.path.isdir(datahub_path) and datahub_path not in sys.path:
             sys.path.insert(0, datahub_path)
-        # Step 1: sa-agent — textbox is the source. If user typed something: fix errors and add context.
-        # If no sentence given (empty textbox): sa-agent generates one. Both outputs used for vector + graph.
+        # Step 1: sg-agent — textbox is the source. If user typed something: fix errors and add context.
+        # If no sentence given (empty textbox): sg-agent generates one. Both outputs used for vector + graph.
         if from_lucky:
             sentence = message
             steps.append({
-                "agent": "sa-agent",
+                "agent": "sg-agent",
                 "action": "use_lucky_sentence",
                 "status": "completed",
-                "duration_ms": int(sa_agent_time_ms_from_client) if sa_agent_time_ms_from_client is not None else 0,
+                "duration_ms": int(sg_agent_time_ms_from_client) if sg_agent_time_ms_from_client is not None else 0,
                 "sentence": sentence[:200],
             })
         else:
             has_user_sentence = bool(message)
             steps.append({
-                "agent": "sa-agent",
+                "agent": "sg-agent",
                 "action": "fix_and_context" if has_user_sentence else "generate",
                 "status": "running",
             })
             t0_sg = time.perf_counter()
             try:
-                from a2a import handle_sa_agent_message_send
+                from a2a import handle_sg_agent_message_send
                 if has_user_sentence:
                     prompt = (
                         "Edit this user query: fix spelling and grammar, remove profanity, preserve intent and all IDs (as 10-digit numbers). "
+                        "CRITICAL: Never modify SSN (format XXX-XX-XXXX), phone/mobile/cell/telephone numbers, account numbers, or any identifiers — preserve them exactly character-for-character. "
                         "You may add a little context for semantic search. Output ONLY the corrected query, nothing else.\n\n"
                         "USER QUERY:\n"
                         "---\n"
@@ -2100,7 +2104,7 @@ def multi_agent_demo_run():
                         "Output only the question, nothing else: "
                     )
                 msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": prompt}], "messageId": "multi-demo-1", "kind": "message"}}
-                task_sg = handle_sa_agent_message_send(msg)
+                task_sg = handle_sg_agent_message_send(msg)
                 for art in (task_sg.get("artifacts") or []):
                     for p in art.get("parts") or []:
                         if p.get("kind") == "text" and p.get("text"):
@@ -2110,14 +2114,14 @@ def multi_agent_demo_run():
                     raw = message if has_user_sentence else "What can you tell me about customer accounts and transactions?"
                     sentence = _sanitize_sentence_fallback(raw) if has_user_sentence else raw
             except Exception as e:
-                get_logger(__name__).warning("multi-agent-demo sa-agent fallback: %s", e)
+                get_logger(__name__).warning("multi-agent-demo sg-agent fallback: %s", e)
                 raw = message if has_user_sentence else "What can you tell me about customer accounts and transactions?"
                 sentence = _sanitize_sentence_fallback(raw) if has_user_sentence else raw
             sg_ms = round((time.perf_counter() - t0_sg) * 1000)
             steps[-1]["status"] = "completed"
             steps[-1]["duration_ms"] = sg_ms
             steps[-1]["sentence"] = sentence[:200]
-        # Step 2: sentiment-agent (uses sentence from sa-agent)
+        # Step 2: sentiment-agent (uses sentence from sg-agent)
         sentiment_result = {}
         steps.append({"agent": "sentiment-agent", "action": "analyze_sentiment", "status": "running"})
         t0_sentiment = time.perf_counter()
@@ -2161,6 +2165,16 @@ def multi_agent_demo_run():
                 from milvus_client import MilvusClient
                 client = MilvusClient(embedding_model="all-MiniLM-L6-v2")
                 results, _, _, _ = client.search(sentence, top_k=10)
+                # Fallback: when 0 results and query has customer ID, try filter + literal query
+                cid = _extract_customer_id_from_question(sentence)
+                if not results and cid:
+                    fallback_query = f"customer_id {cid} account status"
+                    results, _, _, _ = client.search(fallback_query, top_k=10)
+                    if not results:
+                        try:
+                            results, _, _, _ = client.search(sentence, top_k=10, expr=f'customer_id == "{cid}"')
+                        except Exception:
+                            pass
                 return results, None
             except Exception as e:
                 return [], str(e)
@@ -2171,11 +2185,30 @@ def multi_agent_demo_run():
                     return {}, "Neo4j not available"
                 schema_summary = _build_graph_schema_summary(GRAPH_SCHEMA)
                 cypher, err = _generate_cypher_with_ollama(schema_summary, sentence)
-                if err or not cypher:
-                    return {"query": sentence, "cypher": None, "columns": [], "rows": [], "error": err or "No Cypher"}, None
-                rows = client.run(cypher) or []
-                columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
-                return {"query": sentence, "cypher": cypher, "columns": columns, "rows": rows}, None
+                if cypher:
+                    try:
+                        rows = client.run(cypher) or []
+                        if rows and isinstance(rows[0], dict):
+                            columns = list(rows[0].keys())
+                            return {"query": sentence, "cypher": cypher, "columns": columns, "rows": rows}, None
+                        # 0 rows but question asks for specific customer — try customer-by-id fallback
+                        if not rows and _extract_customer_id_from_question(sentence):
+                            fallback = _pick_graph_fallback_cypher(sentence)
+                            if fallback:
+                                rows = client.run(fallback) or []
+                                if rows and isinstance(rows[0], dict):
+                                    columns = list(rows[0].keys())
+                                    return {"query": sentence, "cypher": fallback.strip(), "columns": columns, "rows": rows}, None
+                    except Exception as ex:
+                        err = str(ex)
+                        cypher = None
+                # Fallback: use template when LLM fails or returns invalid Cypher (e.g. RETURN-only)
+                fallback = _pick_graph_fallback_cypher(sentence)
+                if fallback:
+                    rows = client.run(fallback) or []
+                    columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+                    return {"query": sentence, "cypher": fallback.strip(), "columns": columns, "rows": rows}, None
+                return {"query": sentence, "cypher": None, "columns": [], "rows": [], "error": err or "No Cypher"}, None
             except Exception as e:
                 return {"query": sentence, "cypher": None, "columns": [], "rows": [], "error": str(e)}, str(e)
         with ThreadPoolExecutor(max_workers=2) as ex:
@@ -2470,23 +2503,33 @@ def _build_graph_schema_summary(schema: Dict[str, Any]) -> str:
 
 
 def _extract_cypher_from_llm_response(text: str) -> str:
-    """Extract Cypher from LLM response; strip markdown code blocks if present."""
+    """Extract Cypher from LLM response; strip markdown code blocks if present.
+    Rejects invalid Cypher (e.g. RETURN-only without MATCH — variable `d` not defined).
+    """
     text = (text or "").strip()
     if not text:
         return ""
+
+    def _validate_and_return(cypher: str) -> str:
+        cypher = cypher.strip()
+        if not cypher:
+            return ""
+        # Must contain MATCH — RETURN-only or fragment causes "Variable `d` not defined"
+        if "MATCH" not in cypher.upper():
+            return ""
+        return cypher
+
     # If wrapped in ```cypher ... ``` or ``` ... ```, take content between first and second ```
     if "```" in text:
         parts = text.split("```", 2)
         if len(parts) >= 2:
             block = parts[1].strip()
-            # Remove optional language tag on first line (e.g. "cypher" or "neo4j")
             if "\n" in block:
                 first, rest = block.split("\n", 1)
                 if first.strip().lower() in ("cypher", "neo4j"):
                     block = rest.strip()
-            if block and "MATCH" in block.upper():
-                return block
-    return text.strip()
+            return _validate_and_return(block)
+    return _validate_and_return(text)
 
 
 def _generate_cypher_with_ollama(schema_summary: str, question: str) -> tuple[Optional[str], Optional[str]]:
@@ -3120,6 +3163,56 @@ def graph_sample():
         }), 200
 
 
+def _extract_customer_id_from_question(question: str) -> Optional[str]:
+    """Extract 10-digit customer ID from question (e.g. 'customer 1000003621')."""
+    if not question:
+        return None
+    m = re.search(r"\b(?:customer|id|cust)\s*(?:id\s*:?\s*)?(\d{10,})\b", question, re.I)
+    if m:
+        return str(int(m.group(1)))
+    m = re.search(r"\b(\d{10,})\b", question)
+    if m and ("customer" in question.lower() or "cust" in question.lower()):
+        return str(int(m.group(1)))
+    return None
+
+
+def _pick_graph_fallback_cypher(question: str) -> Optional[str]:
+    """Pick a safe Cypher template when LLM returns invalid query (e.g. RETURN-only)."""
+    q = (question or "").lower()
+    customer_id = _extract_customer_id_from_question(question)
+    # "status of customer 1000003621" / "customer 1000003621" — direct lookup
+    if customer_id and ("customer" in q or "status" in q or "account" in q):
+        return f"""
+            MATCH (c:Customer) WHERE toString(c.id) = '{customer_id}'
+            OPTIONAL MATCH (c)-[:HAS_TRANSACTION]->(t:Transaction)
+            OPTIONAL MATCH (c)-[:OPENED_DISPUTE]->(d:Dispute)-[:REFERENCES]->(dt:Transaction)
+            WITH c, count(DISTINCT t) AS tx_count, count(DISTINCT d) AS dispute_count
+            RETURN c.id AS customer_id, c.account_status AS account_status,
+                   c.first_name AS first_name, c.last_name AS last_name,
+                   c.email AS email, tx_count, dispute_count
+            LIMIT 1
+        """
+    if "dispute" in q and ("status" in q or "open" in q or "pending" in q):
+        return GRAPH_QUERIES["open_disputes"]["cypher"]
+    if "dispute" in q and ("credit" in q or "card" in q):
+        return GRAPH_QUERIES["credit_disputes"]["cypher"]
+    if "dispute" in q and "wire" in q:
+        return GRAPH_QUERIES["wire_disputes"]["cypher"]
+    if "dispute" in q and "ach" in q:
+        return GRAPH_QUERIES["ach_disputes"]["cypher"]
+    if "dispute" in q:
+        return GRAPH_QUERIES["disputes_overview"]["cypher"]
+    if "wire" in q and ("10" in q or "10000" in q or "transfer" in q):
+        return GRAPH_QUERIES["wire_over_10k"]["cypher"]
+    if "path" in q or "link" in q or "connect" in q:
+        return GRAPH_QUERIES["paths"]["cypher"]
+    if "transaction" in q and ("customer" in q or "count" in q or "top" in q):
+        return GRAPH_QUERIES["top_customers_by_tx"]["cypher"]
+    if "international" in q or ("wire" in q and "currency" in q):
+        return GRAPH_QUERIES["international_wires"]["cypher"]
+    return GRAPH_QUERIES["disputes_overview"]["cypher"]
+
+
 # Predefined graph queries for the demo (left-pane suggestions). Each returns list of dicts.
 GRAPH_QUERIES = {
     "disputes_overview": {
@@ -3407,9 +3500,9 @@ app.register_blueprint(graph_bp)
 @app.route('/api/suggestions/lucky', methods=['GET'])
 def suggestions_lucky():
     """
-    Return one random suggestion from sa-agent: bank business analytics, customer support,
+    Return one random suggestion from sg-agent: bank business analytics, customer support,
     or regulatory. Uses DataHub schemas (or openint-datahub/schemas.py) and generates
-    a sentence via sa-agent. For Compare "I'm feeling lucky!" button.
+    a sentence via sg-agent. For Compare "I'm feeling lucky!" button.
     """
     try:
         agent_system_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-agents'))
@@ -3419,28 +3512,28 @@ def suggestions_lucky():
         datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
         if os.path.isdir(datahub_path) and datahub_path not in sys.path:
             sys.path.insert(0, datahub_path)
-        from sa_agent.datahub_client import get_schema_and_source
-        from sa_agent.sentence_generator import generate_one_lucky
-        logger.info("sa-agent: fetching schema for lucky suggestion (DataHub assets and schema)")
+        from sg_agent.datahub_client import get_schema_and_source
+        from sg_agent.sentence_generator import generate_one_lucky
+        logger.info("sg-agent: fetching schema for lucky suggestion (DataHub assets and schema)")
         t0_sg = time.perf_counter()
         schema, schema_source = get_schema_and_source()
         if not schema:
-            logger.warning("sa-agent: no schema available for lucky suggestion")
+            logger.warning("sg-agent: no schema available for lucky suggestion")
             return jsonify({
                 "success": False,
                 "error": "No schema available. Ensure DataHub is running or openint-datahub/schemas.py exists.",
             }), 503
         if schema_source == "datahub":
-            logger.info("sa-agent: using DataHub assets and schema as context for LLM (Ollama)")
+            logger.info("sg-agent: using DataHub assets and schema as context for LLM (Ollama)")
         else:
-            logger.info("sa-agent: using openint-datahub schema as context for LLM (DataHub unavailable)")
-        logger.info("sa-agent: generating sentence (Ollama or template fallback)")
+            logger.info("sg-agent: using openint-datahub schema as context for LLM (DataHub unavailable)")
+        logger.info("sg-agent: generating sentence (Ollama or template fallback)")
         result = generate_one_lucky(schema, prefer_llm=True, schema_source=schema_source)
-        sa_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
+        sg_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
         sentence = (result.get("sentence") or "").strip()
         err = result.get("error")
         if err or not sentence:
-            logger.warning("sa-agent: lucky suggestion failed", extra={"error": err or "no sentence"})
+            logger.warning("sg-agent: lucky suggestion failed", extra={"error": err or "no sentence"})
             hint = "Start Ollama (ollama serve) and pull a model, e.g. ollama pull llama3.2. Set OLLAMA_HOST if not localhost:11434."
             return jsonify({
                 "success": False,
@@ -3452,12 +3545,12 @@ def suggestions_lucky():
             "sentence": sentence,
             "category": result.get("category", "Analyst"),
             "source": source,
-            "sa_agent_time_ms": sa_agent_time_ms,
+            "sg_agent_time_ms": sg_agent_time_ms,
         }
         if source == "ollama":
             payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
-        logger.info("sa-agent: lucky suggestion ready", extra={"source": source, "category": result.get("category", "Analyst")})
-        # sa-agent + modelmgmt-agent: optionally annotate the sentence (for Compare "I'm feeling lucky")
+        logger.info("sg-agent: lucky suggestion ready", extra={"source": source, "category": result.get("category", "Analyst")})
+        # sg-agent + modelmgmt-agent: optionally annotate the sentence (for Compare "I'm feeling lucky")
         if sentence and MULTI_MODEL_AVAILABLE and get_analyzer and request.args.get("annotate", "").lower() in ("1", "true", "yes"):
             try:
                 logger.info("modelmgmt-agent: annotating lucky sentence (semantic analysis)")
@@ -3481,13 +3574,13 @@ def suggestions_lucky():
                 payload["annotation"] = {"success": False, "error": str(ann_e)}
         return jsonify(payload)
     except ImportError as e:
-        logger.warning("sa-agent: not available for lucky suggestion", extra={"error": str(e)})
+        logger.warning("sg-agent: not available for lucky suggestion", extra={"error": str(e)})
         return jsonify({
             "success": False,
             "error": "Suggestions agent not available",
         }), 503
     except Exception as e:
-        logger.warning("sa-agent: lucky suggestion failed", extra={"error": str(e)}, exc_info=True)
+        logger.warning("sg-agent: lucky suggestion failed", extra={"error": str(e)}, exc_info=True)
         return jsonify({
             "success": False,
             "error": str(e),

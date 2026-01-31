@@ -1,5 +1,5 @@
 """
-DataHub client for sa-agent.
+DataHub client for sg-agent.
 Connects to DataHub running locally and reads dataset schemas.
 Falls back to openint-datahub/schemas.py when DataHub is unavailable.
 """
@@ -12,7 +12,7 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# Repo root: openint-agents/sa_agent -> openint-agents -> repo root
+# Repo root: openint-agents/sg_agent -> openint-agents -> repo root
 _AGENTS_DIR = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _AGENTS_DIR.parent
 _OPENINT_DATAHUB = _REPO_ROOT / "openint-datahub"

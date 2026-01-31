@@ -8,7 +8,7 @@ How the product looks, feels, and works:
 |--------|---------------|
 | **Chat** | Ask questions in natural language; get answers with semantic search and source citations. |
 | **Compare** | Enter a sentence and see how 3 embedding models annotate it (green = agreement, amber = disagreement). |
-| **A2A** | Agent-to-Agent: all agent communication uses the A2A protocol; LangGraph orchestrates select_agents → run_agents → aggregate; sa-agent and modelmgmt-agent run the sentence → annotation flow. |
+| **A2A** | Agent-to-Agent: all agent communication uses the A2A protocol; LangGraph orchestrates select_agents → run_agents → aggregate; sg-agent and modelmgmt-agent run the sentence → annotation flow. |
 
 ### Chat
 ![Chat](docs/gifs/chat.gif)
@@ -20,7 +20,7 @@ How the product looks, feels, and works:
 
 ### A2A
 ![A2A](docs/gifs/a2a.gif)
-*A2A: sentence generation (sa-agent) → semantic annotation (modelmgmt-agent) with wedge flow.*
+*A2A: sentence generation (sg-agent) → semantic annotation (modelmgmt-agent) with wedge flow.*
 
 > **To capture or update GIFs:** See [docs/gifs/README.md](docs/gifs/README.md) for steps to record each flow.
 
@@ -104,7 +104,7 @@ python ingest_metadata.py
 
 ### openint-agents
 Multi-agent AI system with:
-- **A2A protocol**: All agent communication (search_agent, graph_agent, sa-agent, modelmgmt-agent) goes over Google A2A (Agent Card + message/send)
+- **A2A protocol**: All agent communication (search_agent, graph_agent, sg-agent, modelmgmt-agent) goes over Google A2A (Agent Card + message/send)
 - **LangGraph orchestration**: select_agents → run_agents → aggregate; backend passes an A2A runner so orchestrator invokes agents via A2A
 - Agent registry for service discovery
 - **modelmgmt-agent**: Model registry (Hugging Face + Redis) and sentence semantic annotation; used by the backend for `/api/semantic/*` when agents are loaded

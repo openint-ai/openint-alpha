@@ -333,7 +333,7 @@ export async function previewSemanticAnalysisMulti(
   }
 }
 
-/** Response from GET /api/suggestions/lucky (sa-agent "I'm feeling lucky!") */
+/** Response from GET /api/suggestions/lucky (sg-agent "I'm feeling lucky!") */
 export interface LuckySuggestion {
   success: boolean;
   sentence?: string;
@@ -342,8 +342,8 @@ export interface LuckySuggestion {
   source?: string;
   /** When source is "ollama", the model name (e.g. llama3.2) */
   llm_model?: string;
-  /** Time in ms for sa-agent to generate the sentence (schema + LLM/template) */
-  sa_agent_time_ms?: number;
+  /** Time in ms for sg-agent to generate the sentence (schema + LLM/template) */
+  sg_agent_time_ms?: number;
   error?: string;
 }
 
@@ -363,7 +363,7 @@ export async function getLuckySuggestion(): Promise<LuckySuggestion> {
   return data;
 }
 
-/** A2A run: sa-agent → modelmgmt-agent flow */
+/** A2A run: sg-agent → modelmgmt-agent flow */
 export interface A2AStep {
   agent: string;
   action: string;
@@ -394,8 +394,8 @@ export interface A2ARunResponse {
   steps: A2AStep[];
   sentences: A2ASentence[];
   annotations: A2AAnnotationItem[];
-  /** Time in ms for sa-agent to generate sentences */
-  sa_agent_time_ms?: number | null;
+  /** Time in ms for sg-agent to generate sentences */
+  sg_agent_time_ms?: number | null;
   /** Time in ms for modelmgmt-agent to annotate all sentences */
   modelmgmt_agent_time_ms?: number | null;
   error?: string;
@@ -688,9 +688,9 @@ export interface MultiAgentDemoResponse {
   langgraph_steps: string[];
   /** User's original input (message). */
   original_query?: string;
-  /** sa-agent generated/corrected sentence. */
+  /** sg-agent generated/corrected sentence. */
   sentence: string;
-  /** Sentiment analysis from sentiment-agent (after sa-agent). */
+  /** Sentiment analysis from sentiment-agent (after sg-agent). */
   sentiment?: MultiAgentDemoSentiment;
   chunking_strategies: Record<string, unknown>;
   vector_results: Array<{ id: string; content: string; score: number }>;
@@ -705,7 +705,7 @@ export interface MultiAgentDemoResponse {
 export interface RunMultiAgentDemoOptions {
   debug?: boolean;
   from_lucky?: boolean;
-  sa_agent_time_ms?: number;
+  sg_agent_time_ms?: number;
 }
 
 export async function runMultiAgentDemo(
@@ -714,13 +714,13 @@ export async function runMultiAgentDemo(
   options?: RunMultiAgentDemoOptions
 ): Promise<MultiAgentDemoResponse> {
   const url = `${API_BASE}/api/multi-agent-demo/run`;
-  const body: { message: string; debug: boolean; from_lucky?: boolean; sa_agent_time_ms?: number } = {
+  const body: { message: string; debug: boolean; from_lucky?: boolean; sg_agent_time_ms?: number } = {
     message,
     debug,
   };
   if (options?.from_lucky === true) {
     body.from_lucky = true;
-    if (options.sa_agent_time_ms != null) body.sa_agent_time_ms = options.sa_agent_time_ms;
+    if (options.sg_agent_time_ms != null) body.sg_agent_time_ms = options.sg_agent_time_ms;
   }
   const res = await fetch(url, {
     method: 'POST',

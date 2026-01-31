@@ -97,12 +97,12 @@ python server.py
 
 - **Search Agent** — Semantic search in Milvus vector DB  
 - **Graph Agent** — Graph/relationship queries  
-- **Sentence Generation Agent (sa-agent)** — DataHub-backed schema and example sentences; schema cache in Redis so it survives restarts  
+- **Sentence Generation Agent (sg-agent)** — DataHub-backed schema and example sentences; schema cache in Redis so it survives restarts  
 - **Model Management Agent (modelmgmt-agent)** — Hugging Face + Redis model registry; annotates sentences with semantic tags; session/task state in Redis for multi-day tasks  
 
 ### Communication
 
-- **A2A (Agent-to-Agent)** — When run via the OpenInt backend, **all agent communication** uses the A2A protocol (Agent Card + message/send). The LangGraph orchestrator invokes search_agent and graph_agent via `invoke_agent_via_a2a`; sa-agent and modelmgmt-agent are exposed as A2A endpoints.
+- **A2A (Agent-to-Agent)** — When run via the OpenInt backend, **all agent communication** uses the A2A protocol (Agent Card + message/send). The LangGraph orchestrator invokes search_agent and graph_agent via `invoke_agent_via_a2a`; sg-agent and modelmgmt-agent are exposed as A2A endpoints.
 - **LangGraph (default)** — Orchestration defaults to LangGraph (select_agents → run_agents → aggregate). When agent_instances is provided, LangGraph is required; set `USE_LANGGRAPH=0` to allow message-bus fallback. The backend registers agent instances and passes an A2A runner so every agent call goes over A2A.
 - **Message bus** — Used only when agent_instances is not provided or `USE_LANGGRAPH=0`.
 - **Agent registry** — Service discovery and capabilities.  
@@ -138,7 +138,7 @@ In production, the **backend** runs the orchestrator and agents; clients use the
 
 ## Environment
 
-- **openint-agents:** Optional `.env` for Milvus, Ollama (sg-agent), etc. **REDIS_HOST** / **REDIS_PORT** (default 127.0.0.1:6379) for **agent state**: sa-agent schema cache and modelmgmt-agent session/task state persist in Redis so agent memory survives restarts and multi-day tasks.
+- **openint-agents:** Optional `.env` for Milvus, Ollama (sg-agent), etc. **REDIS_HOST** / **REDIS_PORT** (default 127.0.0.1:6379) for **agent state**: sg-agent schema cache and modelmgmt-agent session/task state persist in Redis so agent memory survives restarts and multi-day tasks.
 - **openint-backend:** Uses same env; ensure backend can resolve `openint-agents` (e.g. repo layout or `PYTHONPATH`).  
 - **openint-mcp:** `OPENINT_BACKEND_URL` (default `http://localhost:3001`).
 
@@ -146,4 +146,4 @@ In production, the **backend** runs the orchestrator and agents; clients use the
 
 ## Adding or changing agents
 
-See `agents/README.md` (if present) and the `agents/`, `sa_agent/`, and `modelmgmt_agent/` packages for implementing new agents and registering them with the orchestrator in `main.py`. **modelmgmt-agent** provides the model registry and semantic annotation used by the backend for `/api/semantic/*`.
+See `agents/README.md` (if present) and the `agents/`, `sg_agent/`, and `modelmgmt_agent/` packages for implementing new agents and registering them with the orchestrator in `main.py`. **modelmgmt-agent** provides the model registry and semantic annotation used by the backend for `/api/semantic/*`.

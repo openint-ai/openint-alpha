@@ -90,10 +90,19 @@ Relationship types (from -> to):
 
 
 def _extract_cypher_from_llm(text: str) -> str:
-    """Extract Cypher from LLM response; strip markdown code blocks if present."""
+    """Extract Cypher from LLM response; strip markdown code blocks if present.
+    Rejects invalid Cypher (e.g. RETURN-only without MATCH — variable `d` not defined).
+    """
     text = (text or "").strip()
     if not text:
         return ""
+
+    def _validate(cypher: str) -> str:
+        cypher = cypher.strip()
+        if not cypher or "MATCH" not in cypher.upper():
+            return ""
+        return cypher
+
     if "```" in text:
         parts = text.split("```", 2)
         if len(parts) >= 2:
@@ -102,9 +111,8 @@ def _extract_cypher_from_llm(text: str) -> str:
                 first, rest = block.split("\n", 1)
                 if first.strip().lower() in ("cypher", "neo4j"):
                     block = rest.strip()
-            if block and "MATCH" in block.upper():
-                return block
-    return text.strip()
+            return _validate(block)
+    return _validate(text)
 
 
 def _generate_cypher_with_ollama(question: str) -> Tuple[Optional[str], Optional[str]]:
