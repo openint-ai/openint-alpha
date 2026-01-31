@@ -28,8 +28,12 @@ import numpy as np
 from faker import Faker
 from datetime import datetime, timedelta
 import random
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Optional, List, Dict, Any
+
+# Timeout for DataHub schema fetch so generator does not hang when DataHub is down
+_SCHEMA_FETCH_TIMEOUT_SEC = 5
 
 # Initialize Faker
 fake = Faker()
@@ -66,20 +70,26 @@ _OPENINT_DATAHUB = _REPO_ROOT / "openint-datahub"
 def get_schema() -> Dict[str, Dict[str, Any]]:
     """
     Fetch table schema from DataHub API when available; otherwise use openint-datahub/schemas.py.
+    Uses a short timeout so the generator does not hang when DataHub is down.
     Returns dict mapping dataset name -> { description, category, fields }.
     """
-    # Try DataHub API via sg_agent client (requires openint-agents on path)
-    try:
+    def _fetch_datahub_schema() -> Optional[Dict[str, Dict[str, Any]]]:
         if str(_REPO_ROOT) not in sys.path:
             sys.path.insert(0, str(_REPO_ROOT))
         openint_agents = _REPO_ROOT / "openint-agents"
         if openint_agents.exists() and str(openint_agents) not in sys.path:
             sys.path.insert(0, str(openint_agents))
         from sg_agent.datahub_client import get_schema_from_datahub  # type: ignore[import-not-found]
-        schema = get_schema_from_datahub()
+        return get_schema_from_datahub()
+
+    # Try DataHub API with timeout so we don't hang when DataHub is not running
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            fut = executor.submit(_fetch_datahub_schema)
+            schema = fut.result(timeout=_SCHEMA_FETCH_TIMEOUT_SEC)
         if schema:
             return schema
-    except Exception:
+    except (FuturesTimeoutError, Exception):
         pass
     # Fallback: openint-datahub/schemas.py
     if _OPENINT_DATAHUB.exists() and str(_OPENINT_DATAHUB) not in sys.path:
@@ -152,20 +162,20 @@ def _get_max_dispute_id() -> int:
     return mx
 
 
-# Batch size for generation loops: 10K–50K based on system; override with GENERATE_BATCH_SIZE
+# Batch size for generation loops: 5K–25K default to avoid OOM; override with GENERATE_BATCH_SIZE or --batch-size
 def _default_generate_batch_size() -> int:
     try:
         env_val = os.environ.get("GENERATE_BATCH_SIZE")
         if env_val is not None:
-            return max(10_000, min(50_000, int(env_val)))
+            return max(5_000, min(50_000, int(env_val)))
     except (TypeError, ValueError):
         pass
     cpu = (os.cpu_count() or 4)
     if cpu >= 8:
-        return 50_000
-    if cpu >= 4:
         return 25_000
-    return 10_000
+    if cpu >= 4:
+        return 15_000
+    return 5_000
 
 
 def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
@@ -188,15 +198,20 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
                         existing_ids.add(vid)
         except Exception:
             pass
-    # Generate num_records unique 10-digit IDs not already in file
+    # Generate num_records unique 10-digit IDs not already in file (memory-safe: no 9B-element set)
     pool_size = CUSTOMER_ID_MAX - CUSTOMER_ID_MIN + 1
     if len(existing_ids) + num_records > pool_size:
         raise ValueError(
             f"Cannot generate {num_records:,} unique 10-digit customer_ids: "
             f"{len(existing_ids):,} already used, pool is {pool_size:,}"
         )
-    available = set(range(CUSTOMER_ID_MIN, CUSTOMER_ID_MAX + 1)) - existing_ids
-    new_ids = random.sample(list(available), num_records)
+    taken = set(existing_ids)
+    new_ids = []
+    while len(new_ids) < num_records:
+        cid = random.randint(CUSTOMER_ID_MIN, CUSTOMER_ID_MAX)
+        if cid not in taken:
+            taken.add(cid)
+            new_ids.append(cid)
 
     print(f"\n📊 Generating {num_records:,} customer records (batch size: {batch_size:,})...")
     if existing_ids:
@@ -205,7 +220,16 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
         print(f"   📁 Output: {customers_path.resolve()}")
     print(f"   📋 customer_id: 10-digit unique, no duplication")
 
-    customers = []
+    # Stream to CSV per batch to avoid OOM (never hold full list in memory)
+    write_header = True
+    if not clean_run and existing_df is not None and len(existing_df) > 0:
+        existing_df = _reorder_df_by_schema("customers", existing_df)
+        existing_df.to_csv(customers_path, index=False)
+        write_header = False
+        total_written = len(existing_df)
+    else:
+        total_written = 0
+
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
@@ -218,15 +242,11 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
             phone = fake.phone_number()
             date_of_birth = fake.date_of_birth(minimum_age=18, maximum_age=90)
             account_opened_date = fake.date_between(start_date='-10y', end_date='today')
-            
-            # Address
             street_address = fake.street_address()
             city = fake.city()
             state_code = fake.state_abbr()
             zip_code = fake.zipcode()
-            country_code = "US"  # Most customers are US-based
-            
-            # Customer attributes
+            country_code = "US"
             customer_type = np.random.choice(
                 ["Individual", "Business", "Premium", "VIP"],
                 p=[0.6, 0.25, 0.1, 0.05]
@@ -236,7 +256,6 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
                 p=[0.85, 0.05, 0.08, 0.02]
             )
             credit_score = np.random.randint(300, 850) if customer_type in ["Individual", "Premium", "VIP"] else None
-            
             batch.append({
                 "customer_id": customer_id,
                 "ssn": ssn,
@@ -257,31 +276,38 @@ def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
                 "created_at": datetime.now(),
                 "updated_at": datetime.now(),
             })
-        
-        customers.extend(batch)
-        
+        df_batch = pd.DataFrame(batch)
+        df_batch = _reorder_df_by_schema("customers", df_batch)
+        df_batch.to_csv(customers_path, mode=("w" if write_header else "a"), index=False, header=write_header)
+        write_header = False
+        total_written += len(df_batch)
         if (i + batch_size) % 100000 == 0 or batch_end == num_records:
             print(f"   Progress: {batch_end:,}/{num_records:,} customers generated")
-    
-    df = pd.DataFrame(customers)
-    if existing_df is not None and len(existing_df) > 0:
-        df = pd.concat([existing_df, df], ignore_index=True)
-    df = _reorder_df_by_schema("customers", df)
-    df.to_csv(customers_path, index=False)
-    print(f"✅ Generated customers.csv with {len(df):,} records")
-    return df
+    print(f"✅ Generated customers.csv with {total_written:,} records")
+    return pd.read_csv(customers_path)
 
 
 def generate_ach_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
-    """Generate ACH (Automated Clearing House) transactions. transaction_id = GUID (UUID). Returns (df, None)."""
+    """Generate ACH (Automated Clearing House) transactions. transaction_id = GUID (UUID). Streams to CSV per batch. Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} ACH transaction records (batch size: {batch_size:,})...")
     print(f"   📋 transaction_id: GUID (UUID v4)")
 
-    transactions = []
+    path = FACTS_DIR / "ach_transactions.csv"
     transaction_types = ["Debit", "Credit"]
     ach_codes = ["PPD", "WEB", "TEL", "CCD", "ARC", "BOC", "POP"]
+    write_header = True
+    total_written = 0
+    if not clean_run and path.exists():
+        try:
+            df_ex = pd.read_csv(path)
+            df_ex = _reorder_df_by_schema("ach_transactions", df_ex)
+            df_ex.to_csv(path, index=False)
+            write_header = False
+            total_written = len(df_ex)
+        except Exception:
+            pass
 
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
@@ -291,24 +317,19 @@ def generate_ach_transactions(num_records, customer_ids, batch_size=None, start_
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-2y', end_date='now')
             transaction_date = transaction_datetime.date()
-            
             transaction_type = np.random.choice(transaction_types)
             amount = round(np.random.lognormal(mean=5, sigma=1.5), 2)
             if transaction_type == "Debit":
                 amount = -abs(amount)
             else:
                 amount = abs(amount)
-            
             ach_code = np.random.choice(ach_codes)
-            # Generate routing number (9 digits, US openInt routing format)
             routing_number = f"{np.random.randint(100000000, 999999999)}"
             account_number = fake.bban()
-            
             status = np.random.choice(
                 ["Completed", "Pending", "Failed", "Reversed"],
                 p=[0.92, 0.05, 0.02, 0.01]
             )
-            
             batch.append({
                 "transaction_id": transaction_id,
                 "customer_id": customer_id,
@@ -324,37 +345,37 @@ def generate_ach_transactions(num_records, customer_ids, batch_size=None, start_
                 "status": status,
                 "created_at": datetime.now(),
             })
-        
-        transactions.extend(batch)
-        
+        df_batch = pd.DataFrame(batch)
+        df_batch = _reorder_df_by_schema("ach_transactions", df_batch)
+        df_batch.to_csv(path, mode=("w" if write_header else "a"), index=False, header=write_header)
+        write_header = False
+        total_written += len(df_batch)
         if (i + batch_size) % 100000 == 0 or batch_end == num_records:
             print(f"   Progress: {batch_end:,}/{num_records:,} ACH transactions generated")
-    
-    df_new = pd.DataFrame(transactions)
-    path = FACTS_DIR / "ach_transactions.csv"
-    if not clean_run and path.exists():
-        try:
-            df_ex = pd.read_csv(path)
-            df_new = pd.concat([df_ex, df_new], ignore_index=True)
-        except Exception:
-            pass
-    df_new = _reorder_df_by_schema("ach_transactions", df_new)
-    df_new.to_csv(path, index=False)
-    print(f"✅ Generated ach_transactions.csv with {len(df_new):,} records")
-    return df_new, None
+    print(f"✅ Generated ach_transactions.csv with {total_written:,} records")
+    return pd.read_csv(path), None
 
 
 def generate_wire_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
-    """Generate Wire transfer transactions. transaction_id = GUID (UUID). Returns (df, None)."""
+    """Generate Wire transfer transactions. transaction_id = GUID (UUID). Streams to CSV per batch. Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Wire transaction records (batch size: {batch_size:,})...")
     print(f"   📋 transaction_id: GUID (UUID v4)")
-
-    transactions = []
+    path = FACTS_DIR / "wire_transactions.csv"
     wire_types = ["Domestic", "International"]
     countries = ["US", "CA", "GB", "DE", "FR", "JP", "AU", "CH"]
-
+    write_header = True
+    total_written = 0
+    if not clean_run and path.exists():
+        try:
+            df_ex = pd.read_csv(path)
+            df_ex = _reorder_df_by_schema("wire_transactions", df_ex)
+            df_ex.to_csv(path, index=False)
+            write_header = False
+            total_written = len(df_ex)
+        except Exception:
+            pass
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
@@ -363,10 +384,8 @@ def generate_wire_transactions(num_records, customer_ids, batch_size=None, start
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-2y', end_date='now')
             transaction_date = transaction_datetime.date()
-            
             wire_type = np.random.choice(wire_types, p=[0.7, 0.3])
-            amount = round(np.random.lognormal(mean=7, sigma=1.8), 2)  # Wires are typically larger
-            
+            amount = round(np.random.lognormal(mean=7, sigma=1.8), 2)
             if wire_type == "International":
                 currency = np.random.choice(["USD", "EUR", "GBP", "JPY", "CAD", "AUD"])
                 beneficiary_country = np.random.choice(countries)
@@ -375,20 +394,15 @@ def generate_wire_transactions(num_records, customer_ids, batch_size=None, start
                 currency = "USD"
                 beneficiary_country = "US"
                 beneficiary_openInt_swift = None
-            
-            # Generate routing numbers (9 digits, US openInt routing format)
             sender_routing = f"{np.random.randint(100000000, 999999999)}"
             beneficiary_routing = f"{np.random.randint(100000000, 999999999)}" if wire_type == "Domestic" else None
             beneficiary_account = fake.bban()
             beneficiary_name = fake.name()
-            
             status = np.random.choice(
                 ["Completed", "Pending", "Failed", "Cancelled"],
                 p=[0.88, 0.08, 0.03, 0.01]
             )
-            
             fee = round(amount * 0.001, 2) if wire_type == "Domestic" else round(amount * 0.002, 2)
-            
             batch.append({
                 "transaction_id": transaction_id,
                 "customer_id": customer_id,
@@ -408,66 +422,61 @@ def generate_wire_transactions(num_records, customer_ids, batch_size=None, start
                 "status": status,
                 "created_at": datetime.now(),
             })
-        
-        transactions.extend(batch)
-        
+        df_batch = pd.DataFrame(batch)
+        df_batch = _reorder_df_by_schema("wire_transactions", df_batch)
+        df_batch.to_csv(path, mode=("w" if write_header else "a"), index=False, header=write_header)
+        write_header = False
+        total_written += len(df_batch)
         if (i + batch_size) % 100000 == 0 or batch_end == num_records:
             print(f"   Progress: {batch_end:,}/{num_records:,} Wire transactions generated")
-    
-    df_new = pd.DataFrame(transactions)
-    path = FACTS_DIR / "wire_transactions.csv"
-    if not clean_run and path.exists():
-        try:
-            df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
-        except Exception:
-            pass
-    df_new = _reorder_df_by_schema("wire_transactions", df_new)
-    df_new.to_csv(path, index=False)
-    print(f"✅ Generated wire_transactions.csv with {len(df_new):,} records")
-    return df_new, None
+    print(f"✅ Generated wire_transactions.csv with {total_written:,} records")
+    return pd.read_csv(path), None
 
 
 def generate_credit_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
-    """Generate Credit card transactions. transaction_id = GUID (UUID). Returns (df, None)."""
+    """Generate Credit card transactions. transaction_id = GUID (UUID). Streams to CSV per batch. Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Credit card transaction records (batch size: {batch_size:,})...")
     print(f"   📋 transaction_id: GUID (UUID v4)")
-
-    transactions = []
+    path = FACTS_DIR / "credit_transactions.csv"
     card_types = ["Visa", "Mastercard", "American Express", "Discover"]
     merchant_categories = [
         "Retail", "Restaurant", "Gas Station", "Grocery", "Online Shopping",
         "Travel", "Entertainment", "Healthcare", "Utilities", "Education"
     ]
-    
+    write_header = True
+    total_written = 0
+    if not clean_run and path.exists():
+        try:
+            df_ex = pd.read_csv(path)
+            df_ex = _reorder_df_by_schema("credit_transactions", df_ex)
+            df_ex.to_csv(path, index=False)
+            write_header = False
+            total_written = len(df_ex)
+        except Exception:
+            pass
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
-        
         for j in range(i, batch_end):
             transaction_id = str(uuid.uuid4())
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-1y', end_date='now')
             transaction_date = transaction_datetime.date()
-
             card_type = np.random.choice(card_types)
             card_number_last4 = str(np.random.randint(1000, 9999))
             amount = round(np.random.lognormal(mean=4, sigma=1.2), 2)
-            
             merchant_name = fake.company()
             merchant_category = np.random.choice(merchant_categories)
             merchant_city = fake.city()
             merchant_state = fake.state_abbr()
             merchant_country = "US"
-            
             authorization_code = fake.bothify(text='??????', letters='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
-            
             status = np.random.choice(
                 ["Approved", "Declined", "Pending", "Refunded"],
                 p=[0.94, 0.04, 0.01, 0.01]
             )
-            
             batch.append({
                 "transaction_id": transaction_id,
                 "customer_id": customer_id,
@@ -487,33 +496,35 @@ def generate_credit_transactions(num_records, customer_ids, batch_size=None, sta
                 "status": status,
                 "created_at": datetime.now(),
             })
-        
-        transactions.extend(batch)
-        
+        df_batch = pd.DataFrame(batch)
+        df_batch = _reorder_df_by_schema("credit_transactions", df_batch)
+        df_batch.to_csv(path, mode=("w" if write_header else "a"), index=False, header=write_header)
+        write_header = False
+        total_written += len(df_batch)
         if (i + batch_size) % 100000 == 0 or batch_end == num_records:
             print(f"   Progress: {batch_end:,}/{num_records:,} Credit transactions generated")
-    
-    df_new = pd.DataFrame(transactions)
-    path = FACTS_DIR / "credit_transactions.csv"
-    if not clean_run and path.exists():
-        try:
-            df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
-        except Exception:
-            pass
-    df_new = _reorder_df_by_schema("credit_transactions", df_new)
-    df_new.to_csv(path, index=False)
-    print(f"✅ Generated credit_transactions.csv with {len(df_new):,} records")
-    return df_new, None
+    print(f"✅ Generated credit_transactions.csv with {total_written:,} records")
+    return pd.read_csv(path), None
 
 
 def generate_check_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
-    """Generate Check transactions. transaction_id = GUID (UUID). Returns (df, None)."""
+    """Generate Check transactions. transaction_id = GUID (UUID). Streams to CSV per batch. Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Check transaction records (batch size: {batch_size:,})...")
     print(f"   📋 transaction_id: GUID (UUID v4)")
-
-    transactions = []
+    path = FACTS_DIR / "check_transactions.csv"
+    write_header = True
+    total_written = 0
+    if not clean_run and path.exists():
+        try:
+            df_ex = pd.read_csv(path)
+            df_ex = _reorder_df_by_schema("check_transactions", df_ex)
+            df_ex.to_csv(path, index=False)
+            write_header = False
+            total_written = len(df_ex)
+        except Exception:
+            pass
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
@@ -522,21 +533,17 @@ def generate_check_transactions(num_records, customer_ids, batch_size=None, star
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-2y', end_date='now')
             transaction_date = transaction_datetime.date()
-            
             check_number = np.random.randint(100, 999999)
             amount = round(np.random.lognormal(mean=5.5, sigma=1.4), 2)
-            
             payee_name = fake.name()
             memo = np.random.choice([
                 "Payment", "Rent", "Utilities", "Services", "Invoice Payment",
                 "Loan Payment", "Insurance", "Tax Payment"
             ], p=[0.2, 0.15, 0.15, 0.15, 0.1, 0.1, 0.1, 0.05])
-            
             status = np.random.choice(
                 ["Cleared", "Pending", "Bounced", "Cancelled"],
                 p=[0.85, 0.1, 0.04, 0.01]
             )
-            
             batch.append({
                 "transaction_id": transaction_id,
                 "customer_id": customer_id,
@@ -551,53 +558,51 @@ def generate_check_transactions(num_records, customer_ids, batch_size=None, star
                 "status": status,
                 "created_at": datetime.now(),
             })
-        
-        transactions.extend(batch)
-        
+        df_batch = pd.DataFrame(batch)
+        df_batch = _reorder_df_by_schema("check_transactions", df_batch)
+        df_batch.to_csv(path, mode=("w" if write_header else "a"), index=False, header=write_header)
+        write_header = False
+        total_written += len(df_batch)
         if (i + batch_size) % 100000 == 0 or batch_end == num_records:
             print(f"   Progress: {batch_end:,}/{num_records:,} Check transactions generated")
-    
-    df_new = pd.DataFrame(transactions)
-    path = FACTS_DIR / "check_transactions.csv"
-    if not clean_run and path.exists():
-        try:
-            df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
-        except Exception:
-            pass
-    df_new = _reorder_df_by_schema("check_transactions", df_new)
-    df_new.to_csv(path, index=False)
-    print(f"✅ Generated check_transactions.csv with {len(df_new):,} records")
-    return df_new, None
+    print(f"✅ Generated check_transactions.csv with {total_written:,} records")
+    return pd.read_csv(path), None
 
 
 def generate_debit_transactions(num_records, customer_ids, batch_size=None, start_id=None, clean_run=False):
-    """Generate Debit card transactions. transaction_id = GUID (UUID). Returns (df, None)."""
+    """Generate Debit card transactions. transaction_id = GUID (UUID). Streams to CSV per batch. Returns (df, None)."""
     if batch_size is None:
         batch_size = _default_generate_batch_size()
     print(f"\n📊 Generating {num_records:,} Debit card transaction records (batch size: {batch_size:,})...")
     print(f"   📋 transaction_id: GUID (UUID v4)")
-
-    transactions = []
+    path = FACTS_DIR / "debit_transactions.csv"
     transaction_types = ["Purchase", "ATM Withdrawal", "Online Payment", "Recurring Payment"]
     merchant_categories = [
         "Retail", "Restaurant", "Gas Station", "Grocery", "ATM",
         "Online Shopping", "Utilities", "Subscription"
     ]
-    
+    write_header = True
+    total_written = 0
+    if not clean_run and path.exists():
+        try:
+            df_ex = pd.read_csv(path)
+            df_ex = _reorder_df_by_schema("debit_transactions", df_ex)
+            df_ex.to_csv(path, index=False)
+            write_header = False
+            total_written = len(df_ex)
+        except Exception:
+            pass
     for i in range(0, num_records, batch_size):
         batch_end = min(i + batch_size, num_records)
         batch = []
-        
         for j in range(i, batch_end):
-            transaction_id = start_id + j
+            transaction_id = str(uuid.uuid4())
             customer_id = np.random.choice(customer_ids)
             transaction_datetime = fake.date_time_between(start_date='-1y', end_date='now')
             transaction_date = transaction_datetime.date()
-            
             transaction_type = np.random.choice(transaction_types)
             amount = round(np.random.lognormal(mean=3.8, sigma=1.1), 2)
-            amount = -abs(amount)  # Debits are negative
-            
+            amount = -abs(amount)
             if transaction_type == "ATM Withdrawal":
                 merchant_name = "ATM"
                 merchant_category = "ATM"
@@ -606,12 +611,10 @@ def generate_debit_transactions(num_records, customer_ids, batch_size=None, star
                 merchant_name = fake.company()
                 merchant_category = np.random.choice(merchant_categories)
                 merchant_location = None
-            
             status = np.random.choice(
                 ["Completed", "Pending", "Declined", "Reversed"],
                 p=[0.93, 0.04, 0.02, 0.01]
             )
-            
             batch.append({
                 "transaction_id": transaction_id,
                 "customer_id": customer_id,
@@ -627,23 +630,15 @@ def generate_debit_transactions(num_records, customer_ids, batch_size=None, star
                 "status": status,
                 "created_at": datetime.now(),
             })
-        
-        transactions.extend(batch)
-        
+        df_batch = pd.DataFrame(batch)
+        df_batch = _reorder_df_by_schema("debit_transactions", df_batch)
+        df_batch.to_csv(path, mode=("w" if write_header else "a"), index=False, header=write_header)
+        write_header = False
+        total_written += len(df_batch)
         if (i + batch_size) % 100000 == 0 or batch_end == num_records:
             print(f"   Progress: {batch_end:,}/{num_records:,} Debit transactions generated")
-    
-    df_new = pd.DataFrame(transactions)
-    path = FACTS_DIR / "debit_transactions.csv"
-    if not clean_run and path.exists():
-        try:
-            df_new = pd.concat([pd.read_csv(path), df_new], ignore_index=True)
-        except Exception:
-            pass
-    df_new = _reorder_df_by_schema("debit_transactions", df_new)
-    df_new.to_csv(path, index=False)
-    print(f"✅ Generated debit_transactions.csv with {len(df_new):,} records")
-    return df_new, None
+    print(f"✅ Generated debit_transactions.csv with {total_written:,} records")
+    return pd.read_csv(path), None
 
 
 def _generate_dispute_description_via_ollama(
@@ -1021,7 +1016,7 @@ Examples:
         "--batch-size",
         type=int,
         default=default_batch,
-        help=f"In-memory batch size for generation loops (default: {default_batch:,}, from system; 10K–50K; set GENERATE_BATCH_SIZE to override)"
+        help=f"In-memory batch size for generation loops (default: {default_batch:,}; 5K–50K; set GENERATE_BATCH_SIZE to override)"
     )
     args = parser.parse_args()
 
@@ -1058,7 +1053,7 @@ Examples:
         print("   📌 Generating only: transactions")
     elif args.only_disputes:
         print("   📌 Generating only: disputes (from existing transactions)")
-    print(f"   📦 Batch size: {args.batch_size:,} (10K–50K based on system)")
+    print(f"   📦 Batch size: {args.batch_size:,} (streams to CSV per batch to reduce memory)")
     print()
 
     start_time = datetime.now()
