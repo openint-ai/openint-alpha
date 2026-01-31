@@ -63,11 +63,11 @@ ollama:
   model: qwen2.5:7b
   resources:
     requests:
-      cpu: "1"
-      memory: "6Gi"
+      cpu: "2"
+      memory: "8Gi"
     limits:
       cpu: "2"
-      memory: "6Gi"
+      memory: "8Gi"
 
 ingress:
   enabled: true
