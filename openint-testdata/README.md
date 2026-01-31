@@ -9,7 +9,6 @@ OpenInt-testdata/
 ├── generators/          # Data generation scripts
 │   ├── customers.py    # Customer data generator
 │   ├── transactions.py # Transaction data generator
-│   └── static.py       # Static reference data
 ├── loaders/            # Data loading scripts
 │   ├── milvus_loader.py # Load data into Milvus
 │   └── validator.py    # Data validation
@@ -35,7 +34,6 @@ python generators/generate_openint_test_data.py --only-disputes --clean-run  # o
 # Generate specific data types
 python generators/generate_openint_test_data.py --only-customers
 python generators/generate_openint_test_data.py --only-transactions
-python generators/generate_openint_test_data.py --only-static
 ```
 
 Disputes are created **only** from existing transaction data: each dispute references a valid `customer_id` and `transaction_id` (both 10-digit) from the respective transaction CSVs. Output files mirror transaction types: `ach_disputes.csv`, `credit_disputes.csv`, `debit_disputes.csv`, `wire_disputes.csv`, `check_disputes.csv`, `atm_disputes.csv`.

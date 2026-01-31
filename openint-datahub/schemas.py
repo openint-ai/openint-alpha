@@ -191,41 +191,6 @@ def get_dataset_schemas() -> Dict[str, Dict[str, Any]]:
         "wire_disputes": {"description": "Wire transaction disputes", "category": "fact", "fields": _dispute_fields()},
         "check_disputes": {"description": "Check transaction disputes", "category": "fact", "fields": _dispute_fields()},
         "atm_disputes": {"description": "ATM transaction disputes", "category": "fact", "fields": _dispute_fields()},
-        
-        # Static Dimension Tables
-        "country_codes": {
-            "description": "Country codes reference table",
-            "category": "static",
-            "fields": [
-                {"name": "country_code", "type": "STRING", "description": "2-letter country code"},
-                {"name": "country_name", "type": "STRING", "description": "Country name"},
-                {"name": "iso_code", "type": "STRING", "description": "ISO 3-letter country code"},
-                {"name": "region", "type": "STRING", "description": "Geographic region"},
-            ]
-        },
-        
-        "state_codes": {
-            "description": "US state codes reference table",
-            "category": "static",
-            "fields": [
-                {"name": "state_code", "type": "STRING", "description": "2-letter state code"},
-                {"name": "state_name", "type": "STRING", "description": "State name"},
-                {"name": "region", "type": "STRING", "description": "US region (Northeast, South, Midwest, West)"},
-            ]
-        },
-        
-        "zip_codes": {
-            "description": "ZIP code reference table with geographic information",
-            "category": "static",
-            "fields": [
-                {"name": "zip_code", "type": "STRING", "description": "ZIP code"},
-                {"name": "city", "type": "STRING", "description": "City name"},
-                {"name": "state_code", "type": "STRING", "description": "State code"},
-                {"name": "latitude", "type": "NUMBER", "description": "Latitude coordinate"},
-                {"name": "longitude", "type": "NUMBER", "description": "Longitude coordinate"},
-                {"name": "timezone", "type": "STRING", "description": "Timezone"},
-            ]
-        },
     }
     
     return schemas

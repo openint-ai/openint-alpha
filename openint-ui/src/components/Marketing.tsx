@@ -45,7 +45,7 @@ export default function Marketing() {
                 Intelligent data & agents
               </p>
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white tracking-tight leading-[1.1]">
-                Search, understand, and act on your data
+                Unlocking AI Agents for your Data
               </h1>
               <p className="mt-5 text-lg text-slate-300 max-w-xl">
                 openInt brings vector search, semantic annotation, agent-to-agent workflows, and graph exploration into one platform. Try the products below.

@@ -70,15 +70,6 @@ for table in "${fact_tables[@]}"; do
     fi
 done
 
-# Check static tables
-static_tables=("country_codes" "state_codes" "zip_codes")
-for table in "${static_tables[@]}"; do
-    if [ ! -f "$TESTDATA_DIR/static/${table}.csv" ]; then
-        echo -e "${YELLOW}⚠️  Missing: static/${table}.csv${NC}"
-        missing_files=$((missing_files + 1))
-    fi
-done
-
 if [ $missing_files -gt 0 ]; then
     echo -e "${YELLOW}⚠️  Found $missing_files missing file(s)${NC}"
     echo -e "${YELLOW}💡 Some schemas may not include row counts${NC}"

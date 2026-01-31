@@ -9,8 +9,7 @@ This project integrates openInt data models with DataHub, an open-source metadat
 The `openint-datahub` project pushes metadata about all openInt data datasets to your DataHub instance, including:
 
 - **Dimension Tables**: customers
-- **Fact Tables**: ach_transactions, wire_transactions, credit_transactions, debit_transactions, check_transactions, disputes
-- **Static Tables**: country_codes, state_codes, zip_codes
+- **Fact Tables**: ach_transactions, wire_transactions, credit_transactions, debit_transactions, check_transactions, disputes (and type-specific: ach_disputes, credit_disputes, etc.)
 
 ## Prerequisites
 

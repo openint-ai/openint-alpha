@@ -3,7 +3,6 @@ openInt Test Data Generator
 Generates realistic openInt test data including:
 - Customer dimension table (default 10K records; override with --num-customers)
 - Transaction fact tables (ACH, Wire, Credit, Debit, Check) for those customers only
-- Static dimension tables (country codes, state codes, zip codes)
 - Disputes by type: ach_disputes.csv, credit_disputes.csv, debit_disputes.csv,
   wire_disputes.csv, check_disputes.csv, atm_disputes.csv
 
@@ -56,9 +55,8 @@ BASE_DIR.mkdir(parents=True, exist_ok=True)
 # Subdirectories
 DIMENSIONS_DIR = BASE_DIR / "dimensions"
 FACTS_DIR = BASE_DIR / "facts"
-STATIC_DIR = BASE_DIR / "static"
 
-for dir_path in [DIMENSIONS_DIR, FACTS_DIR, STATIC_DIR]:
+for dir_path in [DIMENSIONS_DIR, FACTS_DIR]:
     dir_path.mkdir(exist_ok=True)
 
 # DataHub/schema resolution uses repo root
@@ -168,120 +166,6 @@ def _default_generate_batch_size() -> int:
     if cpu >= 4:
         return 25_000
     return 10_000
-
-
-def generate_country_codes():
-    """Generate country codes dimension table"""
-    countries = [
-        {"country_code": "US", "country_name": "United States", "iso_code": "USA", "region": "North America"},
-        {"country_code": "CA", "country_name": "Canada", "iso_code": "CAN", "region": "North America"},
-        {"country_code": "MX", "country_name": "Mexico", "iso_code": "MEX", "region": "North America"},
-        {"country_code": "GB", "country_name": "United Kingdom", "iso_code": "GBR", "region": "Europe"},
-        {"country_code": "DE", "country_name": "Germany", "iso_code": "DEU", "region": "Europe"},
-        {"country_code": "FR", "country_name": "France", "iso_code": "FRA", "region": "Europe"},
-        {"country_code": "IT", "country_name": "Italy", "iso_code": "ITA", "region": "Europe"},
-        {"country_code": "ES", "country_name": "Spain", "iso_code": "ESP", "region": "Europe"},
-        {"country_code": "NL", "country_name": "Netherlands", "iso_code": "NLD", "region": "Europe"},
-        {"country_code": "BE", "country_name": "Belgium", "iso_code": "BEL", "region": "Europe"},
-        {"country_code": "CH", "country_name": "Switzerland", "iso_code": "CHE", "region": "Europe"},
-        {"country_code": "AU", "country_name": "Australia", "iso_code": "AUS", "region": "Oceania"},
-        {"country_code": "NZ", "country_name": "New Zealand", "iso_code": "NZL", "region": "Oceania"},
-        {"country_code": "JP", "country_name": "Japan", "iso_code": "JPN", "region": "Asia"},
-        {"country_code": "CN", "country_name": "China", "iso_code": "CHN", "region": "Asia"},
-        {"country_code": "IN", "country_name": "India", "iso_code": "IND", "region": "Asia"},
-        {"country_code": "KR", "country_name": "South Korea", "iso_code": "KOR", "region": "Asia"},
-        {"country_code": "SG", "country_name": "Singapore", "iso_code": "SGP", "region": "Asia"},
-        {"country_code": "BR", "country_name": "Brazil", "iso_code": "BRA", "region": "South America"},
-        {"country_code": "AR", "country_name": "Argentina", "iso_code": "ARG", "region": "South America"},
-    ]
-    df = pd.DataFrame(countries)
-    df.to_csv(STATIC_DIR / "country_codes.csv", index=False)
-    print(f"✅ Generated country_codes.csv with {len(df)} records")
-    return df
-
-
-def generate_state_codes():
-    """Generate US state codes dimension table"""
-    us_states = [
-        {"state_code": "AL", "state_name": "Alabama", "region": "South"},
-        {"state_code": "AK", "state_name": "Alaska", "region": "West"},
-        {"state_code": "AZ", "state_name": "Arizona", "region": "West"},
-        {"state_code": "AR", "state_name": "Arkansas", "region": "South"},
-        {"state_code": "CA", "state_name": "California", "region": "West"},
-        {"state_code": "CO", "state_name": "Colorado", "region": "West"},
-        {"state_code": "CT", "state_name": "Connecticut", "region": "Northeast"},
-        {"state_code": "DE", "state_name": "Delaware", "region": "Northeast"},
-        {"state_code": "FL", "state_name": "Florida", "region": "South"},
-        {"state_code": "GA", "state_name": "Georgia", "region": "South"},
-        {"state_code": "HI", "state_name": "Hawaii", "region": "West"},
-        {"state_code": "ID", "state_name": "Idaho", "region": "West"},
-        {"state_code": "IL", "state_name": "Illinois", "region": "Midwest"},
-        {"state_code": "IN", "state_name": "Indiana", "region": "Midwest"},
-        {"state_code": "IA", "state_name": "Iowa", "region": "Midwest"},
-        {"state_code": "KS", "state_name": "Kansas", "region": "Midwest"},
-        {"state_code": "KY", "state_name": "Kentucky", "region": "South"},
-        {"state_code": "LA", "state_name": "Louisiana", "region": "South"},
-        {"state_code": "ME", "state_name": "Maine", "region": "Northeast"},
-        {"state_code": "MD", "state_name": "Maryland", "region": "Northeast"},
-        {"state_code": "MA", "state_name": "Massachusetts", "region": "Northeast"},
-        {"state_code": "MI", "state_name": "Michigan", "region": "Midwest"},
-        {"state_code": "MN", "state_name": "Minnesota", "region": "Midwest"},
-        {"state_code": "MS", "state_name": "Mississippi", "region": "South"},
-        {"state_code": "MO", "state_name": "Missouri", "region": "Midwest"},
-        {"state_code": "MT", "state_name": "Montana", "region": "West"},
-        {"state_code": "NE", "state_name": "Nebraska", "region": "Midwest"},
-        {"state_code": "NV", "state_name": "Nevada", "region": "West"},
-        {"state_code": "NH", "state_name": "New Hampshire", "region": "Northeast"},
-        {"state_code": "NJ", "state_name": "New Jersey", "region": "Northeast"},
-        {"state_code": "NM", "state_name": "New Mexico", "region": "West"},
-        {"state_code": "NY", "state_name": "New York", "region": "Northeast"},
-        {"state_code": "NC", "state_name": "North Carolina", "region": "South"},
-        {"state_code": "ND", "state_name": "North Dakota", "region": "Midwest"},
-        {"state_code": "OH", "state_name": "Ohio", "region": "Midwest"},
-        {"state_code": "OK", "state_name": "Oklahoma", "region": "South"},
-        {"state_code": "OR", "state_name": "Oregon", "region": "West"},
-        {"state_code": "PA", "state_name": "Pennsylvania", "region": "Northeast"},
-        {"state_code": "RI", "state_name": "Rhode Island", "region": "Northeast"},
-        {"state_code": "SC", "state_name": "South Carolina", "region": "South"},
-        {"state_code": "SD", "state_name": "South Dakota", "region": "Midwest"},
-        {"state_code": "TN", "state_name": "Tennessee", "region": "South"},
-        {"state_code": "TX", "state_name": "Texas", "region": "South"},
-        {"state_code": "UT", "state_name": "Utah", "region": "West"},
-        {"state_code": "VT", "state_name": "Vermont", "region": "Northeast"},
-        {"state_code": "VA", "state_name": "Virginia", "region": "South"},
-        {"state_code": "WA", "state_name": "Washington", "region": "West"},
-        {"state_code": "WV", "state_name": "West Virginia", "region": "South"},
-        {"state_code": "WI", "state_name": "Wisconsin", "region": "Midwest"},
-        {"state_code": "WY", "state_name": "Wyoming", "region": "West"},
-        {"state_code": "DC", "state_name": "District of Columbia", "region": "Northeast"},
-    ]
-    df = pd.DataFrame(us_states)
-    df.to_csv(STATIC_DIR / "state_codes.csv", index=False)
-    print(f"✅ Generated state_codes.csv with {len(df)} records")
-    return df
-
-
-def generate_zip_codes(num_records=50000):
-    """Generate zip codes dimension table"""
-    zip_codes = []
-    for _ in range(num_records):
-        zip_code = fake.zipcode()
-        city = fake.city()
-        state_code = fake.state_abbr()
-        zip_codes.append({
-            "zip_code": zip_code,
-            "city": city,
-            "state_code": state_code,
-            "latitude": round(fake.latitude(), 6),
-            "longitude": round(fake.longitude(), 6),
-            "timezone": fake.timezone(),
-        })
-    
-    df = pd.DataFrame(zip_codes)
-    df = df.drop_duplicates(subset=['zip_code'])
-    df.to_csv(STATIC_DIR / "zip_codes.csv", index=False)
-    print(f"✅ Generated zip_codes.csv with {len(df)} unique records")
-    return df
 
 
 def generate_customers(num_records=1000000, batch_size=None, clean_run=False):
@@ -1049,7 +933,7 @@ def generate_disputes(num_disputes=5000, batch_size=None, use_llm=True, clean_ru
 def main():
     """Main function to generate all test data"""
     parser = argparse.ArgumentParser(
-        description="Generate openInt test data (customers, transactions, static dimension tables)",
+        description="Generate openInt test data (customers, transactions, disputes)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -1059,7 +943,6 @@ Examples:
   # Generate only one category
   python generate_openint_test_data.py --only-customers
   python generate_openint_test_data.py --only-transactions
-  python generate_openint_test_data.py --only-static
   python generate_openint_test_data.py --only-disputes
 
   # With custom counts (capped by --max-*)
@@ -1081,11 +964,6 @@ Examples:
         "--only-transactions",
         action="store_true",
         help="Generate only transaction fact tables; requires existing customers.csv"
-    )
-    only_group.add_argument(
-        "--only-static",
-        action="store_true",
-        help="Generate only static tables (country_codes, state_codes, zip_codes); skip customers and transactions"
     )
     only_group.add_argument(
         "--only-disputes",
@@ -1152,10 +1030,9 @@ Examples:
     num_transactions_eff = min(args.num_transactions, args.max_transactions)
     num_disputes_eff = min(args.num_disputes, args.max_disputes)
 
-    load_static = args.only_static or (not args.only_customers and not args.only_transactions and not args.only_disputes)
-    load_customers = args.only_customers or (not args.only_static and not args.only_transactions and not args.only_disputes)
-    load_transactions = args.only_transactions or (not args.only_static and not args.only_customers and not args.only_disputes)
-    load_disputes = args.only_disputes or (not args.only_static and not args.only_customers and not args.only_transactions)
+    load_customers = args.only_customers or (not args.only_transactions and not args.only_disputes)
+    load_transactions = args.only_transactions or (not args.only_customers and not args.only_disputes)
+    load_disputes = args.only_disputes or (not args.only_customers and not args.only_transactions)
 
     global SCHEMA
     SCHEMA = get_schema()
@@ -1179,21 +1056,12 @@ Examples:
         print("   📌 Generating only: customers")
     elif args.only_transactions:
         print("   📌 Generating only: transactions")
-    elif args.only_static:
-        print("   📌 Generating only: static (country, state, zip)")
     elif args.only_disputes:
         print("   📌 Generating only: disputes (from existing transactions)")
     print(f"   📦 Batch size: {args.batch_size:,} (10K–50K based on system)")
     print()
 
     start_time = datetime.now()
-
-    # Generate static dimension tables
-    if load_static:
-        print("\n📋 Generating static dimension tables...")
-        generate_country_codes()
-        generate_state_codes()
-        generate_zip_codes()
 
     # Generate customers and/or get customer_ids for transactions
     customer_ids = None
@@ -1262,8 +1130,6 @@ Examples:
     print("✅ Test Data Generation Complete!")
     print("=" * 80)
     print(f"\n📊 Summary:")
-    if load_static:
-        print(f"   • Static: country_codes, state_codes, zip_codes")
     if load_customers:
         print(f"   • Customer records: {num_customers_eff:,}")
     if load_transactions and transaction_distribution:
@@ -1278,7 +1144,6 @@ Examples:
     print(f"\n📁 Data saved to:")
     print(f"   • Dimensions: {DIMENSIONS_DIR}")
     print(f"   • Facts: {FACTS_DIR}")
-    print(f"   • Static: {STATIC_DIR}")
     print(f"\n⏱️  Generation time: {duration}")
     print("=" * 80)
 

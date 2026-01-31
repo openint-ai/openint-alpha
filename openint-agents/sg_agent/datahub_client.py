@@ -25,7 +25,6 @@ if str(_AGENTS_DIR) not in sys.path:
 DEFAULT_DATASET_NAMES = [
     "customers", "ach_transactions", "wire_transactions", "credit_transactions",
     "debit_transactions", "check_transactions", "disputes",
-    "country_codes", "state_codes", "zip_codes",
 ]
 
 DATAHUB_GMS_URL = os.getenv("DATAHUB_GMS_URL", "http://localhost:8080")
