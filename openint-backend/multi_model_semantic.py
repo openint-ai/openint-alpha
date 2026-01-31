@@ -39,7 +39,7 @@ def _get_schema_for_semantics() -> Optional[Dict[str, Dict[str, Any]]]:
         if str(backend_dir) not in sys.path:
             sys.path.insert(0, str(backend_dir))
         try:
-            from sg_agent.datahub_client import get_schema
+            from sa_agent.datahub_client import get_schema
             schema = get_schema()
             if schema:
                 return schema

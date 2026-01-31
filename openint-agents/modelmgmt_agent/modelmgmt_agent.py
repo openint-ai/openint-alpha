@@ -2,7 +2,7 @@
 modelmgmt-agent: Model Management Agent.
 
 Downloads embedding models from Hugging Face, stores them in Redis for in-memory lookup,
-and annotates sentences with semantic tags. Works with sg-agent: sg-agent generates
+and annotates sentences with semantic tags. Works with sa-agent: sa-agent generates
 sentences from DataHub schema + LLM; modelmgmt-agent annotates those (and any) sentences.
 """
 

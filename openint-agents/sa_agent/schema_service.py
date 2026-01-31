@@ -1,5 +1,5 @@
 """
-Schema service for openint-sg-agent (standalone).
+Schema service for sa-agent (standalone / programmatic use).
 Gets schema from DataHub or openint-datahub (with optional Redis cache),
 generates example sentences via Ollama, and filters by hint.
 """
@@ -7,12 +7,19 @@ generates example sentences via Ollama, and filters by hint.
 import logging
 from typing import Dict, List, Any, Optional
 
-from datahub_client import get_schema_and_source
-from sentence_generator import generate_sentences
-from state_store import get_schema_cache, set_schema_cache, is_available as state_store_available
+from sa_agent.datahub_client import get_schema_and_source
+from sa_agent.sentence_generator import generate_sentences
+
+# Use shared agent state store (Redis) for schema cache
+from communication.agent_state_store import (
+    get_state as get_agent_state,
+    set_state as set_agent_state,
+    SCHEMA_CACHE_TTL,
+    is_available as state_store_available,
+)
 
 logger = logging.getLogger(__name__)
-
+AGENT_NAME = "sa-agent"
 
 _schema_cache: Optional[Dict[str, Dict[str, Any]]] = None
 
@@ -20,9 +27,9 @@ _schema_cache: Optional[Dict[str, Dict[str, Any]]] = None
 def get_schema() -> Dict[str, Dict[str, Any]]:
     """Get schema: from Redis if available, else from DataHub/openint-datahub; in-memory fallback when Redis down."""
     if state_store_available():
-        cached = get_schema_cache()
+        cached = get_agent_state(AGENT_NAME, "schema")
         if cached is not None and isinstance(cached, dict):
-            logger.debug("openint-sg-agent: schema loaded from Redis (%s datasets)", len(cached))
+            logger.debug("sa-agent: schema loaded from Redis (%s datasets)", len(cached))
             return cached
     global _schema_cache
     if _schema_cache is not None:
@@ -31,7 +38,7 @@ def get_schema() -> Dict[str, Dict[str, Any]]:
     if not schema:
         return {}
     if state_store_available():
-        set_schema_cache(schema)
+        set_agent_state(AGENT_NAME, "schema", schema, ttl_seconds=SCHEMA_CACHE_TTL)
     _schema_cache = schema
     return schema
 

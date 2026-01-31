@@ -1,9 +1,9 @@
-# Schema Generator Agent (sg-agent)
+# Sentence Generation Agent (sa-agent)
 
-The **Schema Generator Agent** connects to DataHub (running locally), reads dataset schemas, and uses the best available generative model to produce example sentences that:
+The **Sentence Generation Agent** connects to DataHub (running locally), reads dataset schemas, and uses the best available generative model to produce example sentences that:
 
 - **Analysts** would ask (e.g. "Top 10 customers by transaction count", "Which ZIP codes have the most failed transactions?")
-- **Customer care / support** would ask (e.g. "Show me transactions for customer CUST00000001", "List disputes for this account")
+- **Customer care / support** would ask (e.g. "Show me transactions for customer 1000000001", "List disputes for this account")
 - **Business analysts in a bank** would ask (e.g. "Compare ACH vs wire transaction volumes", "States with highest share of international wires")
 
 ## How it works
@@ -39,9 +39,20 @@ The **Schema Generator Agent** connects to DataHub (running locally), reads data
 - **Sentence generation:** Ollama running locally (e.g. `ollama serve` and `ollama pull llama3.2`). No external API key required.
 - **Optional:** `acryl-datahub` – for reading schema from DataHub (install from `openint-datahub/requirements.txt` if you use DataHub).
 
+## Programmatic use (schema_service)
+
+For standalone or programmatic use without the orchestrator (e.g. sentence generation service):
+
+```python
+from sa_agent.schema_service import get_schema, generate_suggestions
+
+schema = get_schema()
+results, message, error = generate_suggestions(query_hint="analyst", count=10)
+```
+
 ## Usage
 
-The agent is registered with the orchestrator. Queries containing words like "suggest", "example question", "what can I ask", "generate sentence", "sample query", "analyst question", or "business analyst" are routed to sg-agent.
+The agent is registered with the orchestrator. Queries containing words like "suggest", "example question", "what can I ask", "generate sentence", "sample query", "analyst question", or "business analyst" are routed to sa-agent.
 
 Example (via backend chat):
 

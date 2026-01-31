@@ -59,13 +59,12 @@ class MilvusClient:
         
         Args:
             embedding_model: Name of the sentence-transformers model to use for embeddings.
-                            Defaults to environment variable EMBEDDING_MODEL or "BAAI/bge-base-en-v1.5"
-                            Recommended model for banking/finance:
-                            - "mukaj/fin-mpnet-base" (default, finance-specific, best for banking/finance)
+                            Defaults to environment variable EMBEDDING_MODEL or "all-MiniLM-L6-v2"
+                            - "all-MiniLM-L6-v2" (default, fast, 384 dimensions)
         """
-        # Get model from environment or use finance model as default
+        # Get model from environment or use all-MiniLM-L6-v2 as default
         if embedding_model is None:
-            embedding_model = os.getenv("EMBEDDING_MODEL", "mukaj/fin-mpnet-base")
+            embedding_model = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
         # Get connection parameters from environment or use defaults
         self.host = os.getenv("MILVUS_HOST", "localhost")
         self.port = os.getenv("MILVUS_PORT", "19530")
@@ -100,10 +99,11 @@ class MilvusClient:
         # Initialize embedding model
         self.embedding_model_name = embedding_model
         self.embedding_model = None
-        # Default dimensions for finance model
+        # Default dimensions for embedding models
         self.embedding_dim = {
             "mukaj/fin-mpnet-base": 768,
-        }.get(embedding_model, 768)  # Default to 768 for finance model
+            "all-MiniLM-L6-v2": 384,
+        }.get(embedding_model, 384)  # Default to 384 for all-MiniLM-L6-v2
         
         if EMBEDDING_AVAILABLE and SentenceTransformer is not None:
             try:
@@ -113,7 +113,7 @@ class MilvusClient:
                     logger.info("Using Redis model registry (O(1) boot when scaling)")
                     self.embedding_model = _load_model_from_registry(embedding_model)
                 else:
-                    logger.info("Finance-specific model optimized for banking/finance queries")
+                    logger.info("Loading embedding model for vectorization")
                     self.embedding_model = SentenceTransformer(embedding_model)
                 if self.embedding_model is not None:
                     self.embedding_dim = self.embedding_model.get_sentence_embedding_dimension()
@@ -123,10 +123,11 @@ class MilvusClient:
             except Exception as e:
                 logger.warning("Failed to load embedding model: %s. Install sentence-transformers. Trying fallback.", e)
                 try:
-                    self.embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+                    fallback = "all-MiniLM-L6-v2"
+                    self.embedding_model = SentenceTransformer(fallback)
                     self.embedding_dim = 384
-                    self.embedding_model_name = "all-MiniLM-L6-v2"
-                    logger.info("Fallback model loaded (dimension: %s)", self.embedding_dim)
+                    self.embedding_model_name = fallback
+                    logger.info("Fallback model loaded (dimension: %s): %s", self.embedding_dim, fallback)
                 except Exception as e2:
                     logger.warning("Fallback model also failed: %s", e2)
         else:
@@ -651,9 +652,27 @@ class MilvusClient:
             print(f"⚠️  Error listing records: {e}")
             return []
     
-    def delete_all_records(self):
+    def drop_collection(self):
+        """
+        Drop the entire collection (all data and schema). Use when switching
+        embedding models (e.g. dimension change). Collection will be recreated on next use.
+        """
+        try:
+            if utility.has_collection(self.collection_name, using=self.alias):
+                utility.drop_collection(self.collection_name, using=self.alias)
+                print(f"✅ Dropped collection '{self.collection_name}'")
+                return {"success": True, "error": None}
+            print("ℹ️  Collection does not exist. Nothing to drop.")
+            return {"success": True, "error": None}
+        except Exception as e:
+            error_msg = str(e)
+            print(f"❌ Failed to drop collection: {error_msg}")
+            return {"success": False, "error": error_msg}
+
+    def delete_all_records(self, drop_collection_if_exists: bool = False):
         """
         Delete all records from the collection.
+        If drop_collection_if_exists=True, drops the entire collection (use when changing embedding dimensions).
         
         Returns:
             dict with keys:
@@ -661,6 +680,8 @@ class MilvusClient:
                 - "deleted_count": int number of records deleted
                 - "error": str error message if any
         """
+        if drop_collection_if_exists:
+            return self.drop_collection()
         collection = self.get_or_create_collection()
         collection.load()
         
@@ -865,11 +886,8 @@ def get_milvus_client(embedding_model: str = None):
     
     Args:
         embedding_model: Name of the sentence-transformers model to use.
-                        Defaults to environment variable EMBEDDING_MODEL or "BAAI/bge-base-en-v1.5"
-                        Recommended for banking/finance:
-                        - "BAAI/bge-base-en-v1.5" (default, best balance)
-                        - "BAAI/bge-large-en-v1.5" (higher quality)
-                        - "intfloat/e5-base-v2" (excellent semantic understanding)
+                        Defaults to environment variable EMBEDDING_MODEL or "all-MiniLM-L6-v2"
+                        - "all-MiniLM-L6-v2" (default, fast, 384 dimensions)
     
     Returns:
         MilvusClient instance

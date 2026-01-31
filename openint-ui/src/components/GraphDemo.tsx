@@ -9,10 +9,14 @@ import {
   fetchGraphSchema,
   fetchGraphSample,
   runGraphQueryNatural,
+  fetchGraphRecentQueries,
+  fetchGraphNodeDetails,
+  fetchGraphSentiment,
   type GraphStats,
   type GraphSchemaResponse,
   type GraphSampleResponse,
   type GraphQueryNaturalResponse,
+  type GraphNodeDetailsResponse,
 } from '../api';
 
 /** Example natural language questions for the graph (LLM generates Cypher from Neo4j schema). */
@@ -31,6 +35,15 @@ const CATEGORY_STYLES: Record<string, { border: string; bg: string; text: string
   Wire: { border: 'border-l-emerald-500', bg: 'bg-emerald-50', text: 'text-emerald-800' },
   Analytics: { border: 'border-l-slate-600', bg: 'bg-slate-100', text: 'text-slate-800' },
 };
+
+/** Map column name (from Cypher RETURN) to link type. LLM often returns c.id, d.id, t.id. */
+function getIdLinkType(col: string): 'customer_id' | 'transaction_id' | 'dispute_id' | null {
+  const k = col.trim().toLowerCase();
+  if (k === 'customer_id' || k === 'c.id') return 'customer_id';
+  if (k === 'transaction_id' || k === 't.id') return 'transaction_id';
+  if (k === 'dispute_id' || k === 'd.id') return 'dispute_id';
+  return null;
+}
 
 function formatCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -100,8 +113,8 @@ function SchemaDiagram({ stats }: { stats: GraphStats | null }) {
 
 export default function GraphDemo() {
   const [stats, setStats] = useState<GraphStats | null>(null);
-  const [schema, setSchema] = useState<GraphSchemaResponse | null>(null);
-  const [sample, setSample] = useState<GraphSampleResponse | null>(null);
+  const [, setSchema] = useState<GraphSchemaResponse | null>(null);
+  const [, setSample] = useState<GraphSampleResponse | null>(null);
   const [queryResult, setQueryResult] = useState<GraphQueryNaturalResponse | null>(null);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -109,6 +122,21 @@ export default function GraphDemo() {
   const [error, setError] = useState<string | null>(null);
   const [dataModelOpen, setDataModelOpen] = useState(false);
   const dataModelRef = useRef<HTMLDivElement>(null);
+  /** When viewing detail (after clicking an ID link): previous result + input for "Back to results". */
+  const [previousResult, setPreviousResult] = useState<GraphQueryNaturalResponse | null>(null);
+  const [previousInput, setPreviousInput] = useState('');
+  /** Breadcrumb for detail view, e.g. { label: "Customer CUST001" }. */
+  const [detailBreadcrumb, setDetailBreadcrumb] = useState<{ label: string } | null>(null);
+  /** Full node details when user clicks an ID (one row table). */
+  const [nodeDetailResult, setNodeDetailResult] = useState<GraphNodeDetailsResponse | null>(null);
+  /** Recent questions from Redis (cached). */
+  const [recentQueries, setRecentQueries] = useState<string[]>([]);
+  /** Tooltip for History: full question text + position. */
+  const [historyTooltip, setHistoryTooltip] = useState<{ text: string; x: number; y: number } | null>(null);
+  /** Sentiment for current dispute (LLM-generated: free-form text + optional emoji + confidence). */
+  const [disputeSentiment, setDisputeSentiment] = useState<{ sentiment: string; confidence: number; emoji?: string } | null>(null);
+  const [sentimentLoading, setSentimentLoading] = useState(false);
+  const [sentimentError, setSentimentError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!dataModelOpen) return;
@@ -118,6 +146,62 @@ export default function GraphDemo() {
     document.addEventListener('mousedown', onDocClick);
     return () => document.removeEventListener('mousedown', onDocClick);
   }, [dataModelOpen]);
+
+  const loadRecentQueries = useCallback(async () => {
+    try {
+      const res = await fetchGraphRecentQueries();
+      setRecentQueries(res.queries || []);
+    } catch {
+      setRecentQueries([]);
+    }
+  }, []);
+
+  // When showing a Dispute node, run LLM sentiment on description (or status + amount). Future: replace with sentiment-agent.
+  useEffect(() => {
+    if (!nodeDetailResult?.success || nodeDetailResult.label !== 'Dispute' || !nodeDetailResult.rows?.[0]) {
+      setDisputeSentiment(null);
+      setSentimentError(null);
+      return;
+    }
+    const row = nodeDetailResult.rows[0] as Record<string, unknown>;
+    const description = row.description != null ? String(row.description) : '';
+    const status = row.dispute_status != null ? String(row.dispute_status) : '';
+    const amount = row.amount_disputed != null ? String(row.amount_disputed) : '';
+    const text = description.trim() || [status, amount, nodeDetailResult.id].filter(Boolean).join(' ').trim();
+    if (!text) {
+      setDisputeSentiment(null);
+      setSentimentError(null);
+      return;
+    }
+    let cancelled = false;
+    setSentimentLoading(true);
+    setSentimentError(null);
+    setDisputeSentiment(null);
+    fetchGraphSentiment(text)
+      .then((res) => {
+        if (cancelled) return;
+        setSentimentLoading(false);
+        if (res.success && res.sentiment != null && res.confidence != null) {
+          setDisputeSentiment({
+            sentiment: res.sentiment,
+            confidence: res.confidence,
+            emoji: res.emoji ?? undefined,
+          });
+          setSentimentError(null);
+        } else {
+          setSentimentError(res.error || 'Sentiment analysis failed');
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setSentimentLoading(false);
+          setSentimentError(e instanceof Error ? e.message : 'Sentiment failed');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [nodeDetailResult?.success, nodeDetailResult?.label, nodeDetailResult?.id, nodeDetailResult?.rows]);
 
   const load = useCallback(async () => {
     setError(null);
@@ -131,12 +215,13 @@ export default function GraphDemo() {
       setStats(statsRes);
       setSchema(schemaRes);
       setSample(sampleRes);
+      await loadRecentQueries();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadRecentQueries]);
 
   useEffect(() => {
     load();
@@ -147,29 +232,74 @@ export default function GraphDemo() {
     if (!q) return;
     setQueryLoading(true);
     setError(null);
+    setDetailBreadcrumb(null);
+    setPreviousResult(null);
+    setPreviousInput('');
+    setNodeDetailResult(null);
     try {
       const res = await runGraphQueryNatural(q);
       setQueryResult(res);
+      await loadRecentQueries();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setQueryResult(null);
     } finally {
       setQueryLoading(false);
     }
-  }, [input]);
+  }, [input, loadRecentQueries]);
 
   const fillAndRun = useCallback((question: string) => {
     setInput(question);
     setQueryLoading(true);
     setError(null);
+    setDetailBreadcrumb(null);
+    setPreviousResult(null);
+    setPreviousInput('');
+    setNodeDetailResult(null);
     runGraphQueryNatural(question)
       .then(setQueryResult)
+      .then(() => loadRecentQueries())
       .catch((e) => {
         setError(e instanceof Error ? e.message : String(e));
         setQueryResult(null);
       })
       .finally(() => setQueryLoading(false));
-  }, []);
+  }, [loadRecentQueries]);
+
+  const goBackToResults = useCallback(() => {
+    setQueryResult(previousResult);
+    setInput(previousInput);
+    setDetailBreadcrumb(null);
+    setNodeDetailResult(null);
+    setPreviousResult(null);
+    setPreviousInput('');
+  }, [previousResult, previousInput]);
+
+  const linkTypeToLabel: Record<string, string> = { customer_id: 'Customer', transaction_id: 'Transaction', dispute_id: 'Dispute' };
+
+  const runQueryForId = useCallback((col: string, value: string) => {
+    const linkType = getIdLinkType(col);
+    if (!linkType) return;
+    const label = linkTypeToLabel[linkType];
+    if (!label) return;
+    setPreviousResult(queryResult);
+    setPreviousInput(input);
+    const entityLabel = linkType.replace(/_id$/, '').replace(/^./, (s) => s.toUpperCase());
+    setDetailBreadcrumb({ label: `${entityLabel} ${value}` });
+    setNodeDetailResult(null);
+    setQueryLoading(true);
+    setError(null);
+    fetchGraphNodeDetails(label, String(value).trim())
+      .then((res) => {
+        setNodeDetailResult(res);
+        if (res.success && res.rows?.length) setInput(`Details for ${label} ${value}`);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setNodeDetailResult(null);
+      })
+      .finally(() => setQueryLoading(false));
+  }, [queryResult, input]);
 
   if (loading) {
     return (
@@ -268,9 +398,45 @@ export default function GraphDemo() {
                   ))}
                 </ul>
               </div>
+              {recentQueries.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">History</p>
+                  <ul className="space-y-1 max-h-48 overflow-y-auto">
+                    {recentQueries.map((q) => (
+                      <li key={q}>
+                        <button
+                          type="button"
+                          onClick={() => fillAndRun(q)}
+                          disabled={queryLoading}
+                          onMouseEnter={(e) => setHistoryTooltip({ text: q, x: e.clientX, y: e.clientY })}
+                          onMouseLeave={() => setHistoryTooltip(null)}
+                          className="w-full text-left px-3 py-2 text-xs rounded-lg bg-slate-50 border border-slate-200 text-blue-600 underline underline-offset-2 hover:bg-slate-100 hover:border-slate-300 truncate disabled:opacity-50"
+                        >
+                          {q.length > 60 ? `${q.slice(0, 60)}…` : q}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
         </aside>
+
+        {/* History tooltip: full question on hover (matches center-pane Question block) */}
+        {historyTooltip && (
+          <div
+            className="fixed z-[100] pointer-events-none max-w-sm rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white p-4 shadow-sm"
+            style={{
+              left: historyTooltip.x,
+              top: historyTooltip.y - 8,
+              transform: 'translate(-50%, -100%)',
+            }}
+          >
+            <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider mb-2">Question</p>
+            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap break-words">{historyTooltip.text}</p>
+          </div>
+        )}
 
         {/* Center pane: results */}
         <main className="flex-1 min-w-0">
@@ -279,29 +445,146 @@ export default function GraphDemo() {
               Results
             </h2>
             <div className="p-4">
+              {detailBreadcrumb && (
+                <nav className="mb-4 flex items-center gap-2 text-sm" aria-label="Breadcrumb">
+                  <button
+                    type="button"
+                    onClick={goBackToResults}
+                    className="text-blue-600 hover:text-blue-800 hover:underline underline-offset-2 font-medium"
+                  >
+                    Results
+                  </button>
+                  <span className="text-gray-400" aria-hidden>›</span>
+                  <span className="text-gray-700 font-medium">{detailBreadcrumb.label}</span>
+                </nav>
+              )}
               {queryLoading && (
                 <p className="text-sm text-gray-500">Running query…</p>
               )}
-              {!queryLoading && queryResult && (
+              {!queryLoading && nodeDetailResult && (
+                <>
+                  {nodeDetailResult.error && (
+                    <p className="text-sm text-red-600 mb-3">{nodeDetailResult.error}</p>
+                  )}
+                  {nodeDetailResult.cypher && (
+                    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-800 shadow-sm overflow-hidden">
+                      <div className="px-4 py-2 border-b border-slate-600 bg-slate-700/50">
+                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Neo4j Cypher (node lookup)</p>
+                      </div>
+                      <pre className="p-4 text-xs font-mono text-slate-200 leading-relaxed overflow-x-auto whitespace-pre-wrap break-words">
+                        {nodeDetailResult.cypher.trim()}
+                      </pre>
+                      {nodeDetailResult.params && Object.keys(nodeDetailResult.params).length > 0 && (
+                        <div className="px-4 pb-4 pt-0">
+                          <p className="text-xs text-slate-400 mb-1">Parameters:</p>
+                          <pre className="text-xs font-mono text-slate-300 whitespace-pre-wrap break-words">
+                            {JSON.stringify(nodeDetailResult.params, null, 2)}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {nodeDetailResult.success && nodeDetailResult.rows?.[0] && (
+                    <div className="overflow-x-auto">
+                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                        {nodeDetailResult.label} details · {nodeDetailResult.id}
+                      </p>
+                      <p className="text-sm text-gray-600 mb-3">
+                        All properties for this {nodeDetailResult.label.toLowerCase()} in table format.
+                      </p>
+                      {nodeDetailResult.label === 'Customer' && (() => {
+                        const cols = nodeDetailResult.columns ?? Object.keys(nodeDetailResult.rows[0]);
+                        const onlyId = cols.length === 1 && (cols[0] === 'id' || cols[0] === 'customer_id');
+                        return onlyId ? (
+                          <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-sm text-amber-800">
+                            <p className="font-medium mb-1">Only ID is stored for this customer in the graph.</p>
+                            <p className="text-amber-700">
+                              To see full details (name, email, address, etc.), run the Neo4j loader with customer enrichment and ensure <code className="bg-amber-100 px-1 rounded">dimensions/customers.csv</code> is loaded (step 3: enrich Customer nodes).
+                            </p>
+                          </div>
+                        ) : null;
+                      })()}
+                      {nodeDetailResult.label === 'Dispute' && (
+                        <div className="mb-4 rounded-xl border border-amber-200 bg-gradient-to-br from-amber-50/80 to-white p-4 shadow-sm">
+                          <p className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-1">Sentiment (LLM-generated, from description)</p>
+                          <p className="text-xs text-amber-600/90 mb-2">Powered by LLM · future: sentiment-agent</p>
+                          {sentimentLoading && (
+                            <p className="text-sm text-gray-500">Analyzing sentiment…</p>
+                          )}
+                          {sentimentError && !sentimentLoading && (
+                            <p className="text-sm text-amber-700">{sentimentError}</p>
+                          )}
+                          {disputeSentiment && !sentimentLoading && (
+                            <div className="flex flex-wrap items-center gap-3">
+                              <span className="text-2xl" title={disputeSentiment.sentiment} aria-hidden>
+                                {disputeSentiment.emoji ?? '💬'}
+                              </span>
+                              <span className="text-sm font-medium text-gray-800">
+                                {disputeSentiment.sentiment}
+                              </span>
+                              <span className="text-xs text-gray-500 font-mono">
+                                Confidence: {disputeSentiment.confidence.toFixed(2)} (0–1)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <table className="w-full text-sm border-collapse border border-surface-200">
+                        <thead>
+                          <tr className="border-b border-surface-200 bg-surface-50">
+                            <th className="text-left px-3 py-2 font-medium text-gray-700 border-b border-surface-200">Property</th>
+                            <th className="text-left px-3 py-2 font-medium text-gray-700 border-b border-surface-200">Value</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(nodeDetailResult.columns ?? Object.keys(nodeDetailResult.rows[0])).map((col) => {
+                            const raw = nodeDetailResult.rows[0][col];
+                            const display =
+                              raw == null
+                                ? '—'
+                                : typeof raw === 'object'
+                                  ? JSON.stringify(raw, null, 2)
+                                  : String(raw);
+                            return (
+                              <tr key={col} className="border-b border-surface-100 hover:bg-surface-50">
+                                <td className="px-3 py-2 font-medium text-gray-700 align-top border-r border-surface-100">{col.replace(/_/g, ' ')}</td>
+                                <td className="px-3 py-2 text-gray-800 font-mono text-xs whitespace-pre-wrap break-words align-top">
+                                  {display}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              )}
+              {!queryLoading && !nodeDetailResult && queryResult && (
                 <>
                   {queryResult.error && (
                     <p className="text-sm text-red-600 mb-3">{queryResult.error}</p>
                   )}
                   {queryResult.query && (
-                    <p className="text-sm font-medium text-gray-700 mb-2">
-                      <span className="text-gray-500">Question: </span>
-                      {queryResult.query}
-                      {'llm_model' in queryResult && queryResult.llm_model && (
-                        <span className="ml-2 text-xs font-normal text-gray-400">
-                          ({queryResult.llm_model}{queryResult.llm_time_ms != null ? `, ${queryResult.llm_time_ms}ms` : ''})
-                        </span>
+                    <div className="mb-4 rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50/80 to-white p-4 shadow-sm">
+                      <p className="text-xs font-semibold text-indigo-600 uppercase tracking-wider mb-2">Question</p>
+                      <p className="text-sm text-gray-800 leading-relaxed">
+                        {queryResult.query}
+                      </p>
+                      {'llm_model' in queryResult && (queryResult.llm_model || queryResult.llm_time_ms != null) && (
+                        <p className="mt-2 text-xs text-gray-500">
+                          {queryResult.llm_model}
+                          {queryResult.llm_time_ms != null ? ` · ${queryResult.llm_time_ms}ms` : ''}
+                        </p>
                       )}
-                    </p>
+                    </div>
                   )}
                   {queryResult.cypher && (
-                    <div className="mb-4">
-                      <p className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-1.5">Neo4j Cypher</p>
-                      <pre className="rounded-lg border border-surface-200 bg-slate-50 px-3 py-2.5 text-xs font-mono text-slate-800 overflow-x-auto whitespace-pre-wrap break-words">
+                    <div className="mb-4 rounded-xl border border-slate-200 bg-slate-800 shadow-sm overflow-hidden">
+                      <div className="px-4 py-2 border-b border-slate-600 bg-slate-700/50">
+                        <p className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Neo4j Cypher</p>
+                      </div>
+                      <pre className="p-4 text-xs font-mono text-slate-200 leading-relaxed overflow-x-auto whitespace-pre-wrap break-words">
                         {queryResult.cypher.trim()}
                       </pre>
                     </div>
@@ -329,11 +612,29 @@ export default function GraphDemo() {
                           ) : (
                             queryResult.rows.map((row, i) => (
                               <tr key={i} className="border-b border-surface-100 hover:bg-surface-50">
-                                {queryResult.columns.map((col) => (
-                                  <td key={col} className="px-3 py-2 text-gray-800 font-mono text-xs">
-                                    {row[col] != null ? String(row[col]) : '—'}
-                                  </td>
-                                ))}
+                                {queryResult.columns.map((col) => {
+                                  const val = row[col];
+                                  const str = val != null ? String(val) : '—';
+                                  const linkType = getIdLinkType(col);
+                                  const isIdLink = linkType !== null && val != null && String(val).trim() !== '';
+                                  return (
+                                    <td key={col} className="px-3 py-2 text-gray-800 font-mono text-xs">
+                                      {isIdLink ? (
+                                        <button
+                                          type="button"
+                                          onClick={() => runQueryForId(col, String(val))}
+                                          disabled={queryLoading}
+                                          className="text-blue-600 underline underline-offset-2 hover:text-blue-800 cursor-pointer disabled:opacity-50 text-left font-mono"
+                                          title={`Fetch graph details for this ${linkType.replace(/_id$/, '')}`}
+                                        >
+                                          {str}
+                                        </button>
+                                      ) : (
+                                        str
+                                      )}
+                                    </td>
+                                  );
+                                })}
                               </tr>
                             ))
                           )}
@@ -343,7 +644,7 @@ export default function GraphDemo() {
                   ) : null}
                 </>
               )}
-              {!queryLoading && !queryResult && (
+              {!queryLoading && !queryResult && !nodeDetailResult && (
                 <p className="text-sm text-gray-500">Enter a question or pick an example to run a graph query.</p>
               )}
             </div>

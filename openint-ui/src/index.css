@@ -59,4 +59,38 @@
   .graph-connected-dot {
     animation: pulse-soft 2s ease-in-out infinite;
   }
+
+  /* Multi-Agent Demo: result card gentle fade-in */
+  @keyframes result-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .result-card-enter {
+    animation: result-card-in 0.4s ease-out forwards;
+  }
+
+  /* Enrich-agent collaboration: dots pulsing when collaborating with vectordb + graph */
+  @keyframes enrich-collab-flow {
+    0%, 100% { opacity: 0.6; transform: scale(0.9); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+  .enrich-collab-dot {
+    animation: enrich-collab-flow 1.2s ease-in-out infinite;
+  }
+  .enrich-collab-dot-2 { animation-delay: 0.3s; }
+  .enrich-collab-dot-3 { animation-delay: 0.6s; }
+  /* Subtle pulse when collaboration is done */
+  @keyframes enrich-collab-done {
+    0%, 100% { opacity: 0.85; }
+    50% { opacity: 1; }
+  }
+  .enrich-collab-done {
+    animation: enrich-collab-done 2s ease-in-out infinite;
+  }
 }

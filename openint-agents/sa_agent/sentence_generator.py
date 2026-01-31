@@ -1,5 +1,5 @@
 """
-Sentence generator for sg-agent.
+Sentence generator for sa-agent.
 Uses Ollama (open-source LLM) to generate banking, data, analytics, and regulatory
 example questions. Context comes from the DataHub catalog schema (datasets and fields).
 No template fallback.
@@ -43,7 +43,7 @@ def _build_prompt(schema_summary: str, count: int, short_for_lucky: bool = False
     (or openint-datahub fallback). schema_source is 'datahub' or 'openint-datahub'."""
     context_label = "DataHub assets and schema (from DataHub catalog)" if schema_source == "datahub" else "schema (from openint-datahub; DataHub unavailable)"
     if short_for_lucky:
-        return f"""You are helping a banking data platform. Context to the LLM: {context_label}. Given the schema below, generate exactly {count} natural-language questions (1-3 sentences each). Banking/data/analytics/regulatory only. Return a JSON array of objects with "sentence" and "category" (one of: Analyst, Customer Care, Business Analyst, Regulatory). Use only table/field names from the schema. Return ONLY the JSON array.
+        return f"""You are helping a banking data platform. Context to the LLM: {context_label}. Given the schema below, generate exactly {count} natural-language questions (1-3 sentences each). Banking/data/analytics/regulatory only. Return a JSON array of objects with "sentence" and "category" (one of: Analyst, Customer Care, Business Analyst, Regulatory). Use only table/field names from the schema. If you include example IDs, use exactly 10-digit numeric IDs: customer_id (e.g. 1000000001), transaction_id (e.g. 1000001234), dispute_id (e.g. 1000005678). Never use prefixes like CUST or TX. Return ONLY the JSON array.
 
 Schema:
 {schema_summary}"""
@@ -58,6 +58,7 @@ Rules:
 - Business Analyst: KPIs, trends, segments, comparisons, year-over-year, regional breakdowns.
 - Regulatory: compliance, reporting, audit, SAR, CTR, multi-condition filters, audit trails.
 - Use only table/field names from the schema. All questions must be banking/data/analytics/regulatory in nature.
+- If you include example IDs (customer, transaction, dispute), use exactly 10-digit numeric IDs only: customer_id (e.g. 1000000001), transaction_id (e.g. 1000001234), dispute_id (e.g. 1000005678). Never use prefixes like CUST or TX.
 - CRITICAL — Length and complexity: Each question MUST be at least 5x longer than a one-line question (aim for 50–120+ words). Make every query complex: use multiple clauses, conditions, and groupings. Include at least 3–5 of: time ranges, breakdowns (by region/type/state), comparisons (vs last period), explicit fields to return, filters (amounts, statuses), and purpose (e.g. "for executive summary", "for compliance review"). No short one-liners.
 - Return ONLY the JSON array, no other text."""
 
@@ -134,13 +135,11 @@ def _generate_with_ollama(schema_summary: str, count: int = 20, short_for_lucky:
 
 
 def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Template-based example sentences from schema (no LLM). UNUSED: sg-agent is strictly LLM-only."""
+    """Template-based example sentences from schema (no LLM). Fallback when Ollama unavailable."""
     sentences: List[Dict[str, Any]] = []
-    dataset_names = list(schema.keys())
-    field_lists = {name: [f.get("name", "") for f in meta.get("fields", [])] for name, meta in schema.items()}
-
-    # Analyst-style — long, complex queries (multi-clause, groupings, comparisons)
     ds = "disputes" if "disputes" in schema else "transactions"
+
+    # Analyst-style
     templates_analyst = [
         "I need a report showing the top {n} customers by total number of transactions for the last quarter, broken down by transaction type (ACH, wire, check, and card), including their region and account status, and compared to the same period last year so we can see growth trends.",
         "Give me the top {n} cities by customer count for the past 6 months, with a breakdown of active vs closed accounts per city, and show month-over-month change in customer count so we can identify which markets are growing or shrinking.",
@@ -157,11 +156,11 @@ def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any
         s = t.format(n=10, dataset=ds)
         sentences.append({"sentence": s, "category": "Analyst", "source": "template"})
 
-    # Customer care-style — long, complex queries (full context, related records, time ranges)
+    # Customer care-style
     templates_care = [
         "Show me all transactions for customer {cid} in the last 30 days including amount, status, transaction type (ACH, wire, card), date, and counterparty, and list any related disputes or reversals so I can explain the activity to the customer.",
         "List all disputes for customer {cid} that are still open or were closed in the last 90 days, with filing date, amount, status, resolution date if closed, and the associated transaction IDs so I can give a full dispute history.",
-        "What is the current account status for customer {cid}, including active vs closed, total transaction count and volume for the last 12 months, and any pending ACH or wire transactions that haven’t settled yet?",
+        "What is the current account status for customer {cid}, including active vs closed, total transaction count and volume for the last 12 months, and any pending ACH or wire transactions that haven't settled yet?",
         "Show me all pending ACH payments for the account associated with customer {cid}, with amount, expected settlement date, originator or beneficiary details, and how long each has been pending so we can follow up if needed.",
         "I need to see all wire transfers over $10,000 for customer {cid} in the last 90 days with beneficiary name and country, amount, date, and status, and flag any that are still pending or failed for compliance or customer inquiry.",
         "List all credit card disputes for customer {cid} that are still open, with filing date, amount, merchant, dispute reason, and days since filing, plus the status of each so I can prioritize and update the customer.",
@@ -169,10 +168,10 @@ def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any
         "For customer {cid}, give me a summary of failed or reversed transactions in the last 60 days with transaction type, amount, date, and reason if available, and list any related disputes so we can resolve in one call.",
     ]
     for t in templates_care:
-        s = t.format(cid="CUST00000001")
+        s = t.format(cid="1000000001")
         sentences.append({"sentence": s, "category": "Customer Care", "source": "template"})
 
-    # Business analyst (bank) style — long, complex queries (KPIs, trends, comparisons, breakdowns)
+    # Business analyst style
     templates_ba = [
         "I need the top 10 largest wire transfers for the last quarter with originator, beneficiary, amount, date, and country, plus a breakdown of domestic vs international and how that compares to the prior quarter for executive summary.",
         "Which states have the highest share of international wires versus domestic for the last 6 months, with total volume and count per state, and show the trend month over month so we can see where international is growing.",
@@ -188,7 +187,7 @@ def _generate_templates(schema: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any
     for s in templates_ba:
         sentences.append({"sentence": s, "category": "Business Analyst", "source": "template"})
 
-    # Regulatory / compliance style — long, complex queries (multi-condition, audit, SAR)
+    # Regulatory style
     templates_regulatory = [
         "For SAR reporting, list all wire transfers over $10,000 in the last 30 days with originator name and ID, beneficiary name and country, amount, date, and transaction ID, grouped by originator, and flag any originators with multiple such transfers in the period.",
         "I need disputes filed in Q1 by state with count and total amount per state, plus the breakdown by dispute type and by resolution status (open, closed, won, lost), for regulatory and board reporting.",

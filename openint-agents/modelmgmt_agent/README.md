@@ -1,12 +1,12 @@
 # modelmgmt-agent: Model Management Agent
 
-modelmgmt-agent downloads embedding models from **Hugging Face**, stores them in **Redis** for in-memory lookup, and **annotates sentences** with semantic tags (entities, intents, schema fields). It works with **sg-agent**: sg-agent generates example sentences from DataHub schema + LLM; modelmgmt-agent annotates those (and any) sentences.
+modelmgmt-agent downloads embedding models from **Hugging Face**, stores them in **Redis** for in-memory lookup, and **annotates sentences** with semantic tags (entities, intents, schema fields). It works with **sa-agent**: sa-agent generates example sentences from DataHub schema + LLM; modelmgmt-agent annotates those (and any) sentences.
 
 ## Responsibilities
 
 - **Model registry**: Download models from Hugging Face; store in Redis so replicas hydrate in O(1). Thundering-herd protection: one writer, others wait.
 - **Agent state (Redis)**: When `context.session_id` is set, session/task state (last_models_used, task_id, last_query) is persisted in Redis so agent memory survives restarts and multi-day tasks.
-- **Sentence annotation**: Run one or all configured models on a sentence; return tags, highlighted segments, and schema-based matches (DataHub schema from sg-agent / openint-datahub).
+- **Sentence annotation**: Run one or all configured models on a sentence; return tags, highlighted segments, and schema-based matches (DataHub schema from sa-agent / openint-datahub).
 
 ## Capabilities
 
@@ -18,10 +18,10 @@ modelmgmt-agent downloads embedding models from **Hugging Face**, stores them in
 - **HF_TOKEN** / **HUGGING_FACE_HUB_TOKEN**: Optional; higher rate limits for Hugging Face.
 - **MULTI_MODEL_SEMANTIC_MODELS**: Comma-separated model IDs (default: mukaj/fin-mpnet-base, ProsusAI/finbert, sentence-transformers/all-mpnet-base-v2).
 
-## Interaction with sg-agent
+## Interaction with sa-agent
 
-- **sg-agent**: Generates example sentences using DataHub schema and LLM (e.g. "I'm feeling lucky" in the Compare UI).
-- **modelmgmt-agent**: Annotates any sentence with semantic tags. Backend can call sg-agent for a sentence, then modelmgmt-agent to annotate it (e.g. lucky + `?annotate=true` returns sentence and annotation).
+- **sa-agent**: Generates example sentences using DataHub schema and LLM (e.g. "I'm feeling lucky" in the Compare UI).
+- **modelmgmt-agent**: Annotates any sentence with semantic tags. Backend can call sa-agent for a sentence, then modelmgmt-agent to annotate it (e.g. lucky + `?annotate=true` returns sentence and annotation).
 
 ## Backend
 

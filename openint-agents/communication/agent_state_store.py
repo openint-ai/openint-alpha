@@ -1,7 +1,7 @@
 """
 Redis-backed Agent State Store.
 
-Persistent state for sg-agent and modelmgmt-agent so agent memory survives restarts
+Persistent state for sa-agent and modelmgmt-agent so agent memory survives restarts
 and maintains state across multi-day tasks. Uses REDIS_HOST/REDIS_PORT (default
 127.0.0.1:6379). Keys are prefixed with agent_state:; values are JSON.
 """
@@ -68,7 +68,7 @@ def _key(agent: str, *parts: str) -> str:
 
 def get_state(agent: str, *key_parts: str) -> Optional[Dict[str, Any]]:
     """
-    Get JSON state for agent. key_parts form the key suffix, e.g. get("sg-agent", "schema").
+    Get JSON state for agent. key_parts form the key suffix, e.g. get("sa-agent", "schema").
     Returns None if key missing, Redis down, or invalid JSON.
     """
     r = _get_redis()

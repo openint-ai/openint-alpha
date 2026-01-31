@@ -21,7 +21,7 @@ const PRODUCTS = [
   {
     path: '/a2a',
     label: 'A2A Demo',
-    description: 'Watch the Agent-to-Agent (A2A) flow: sg-agent generates sentences from your schema, modelmgmt-agent annotates them with semantic tags in real time.',
+    description: 'Watch the Agent-to-Agent (A2A) flow: sa-agent generates sentences from your schema, modelmgmt-agent annotates them with semantic tags in real time.',
     icon: '🤝',
   },
   {

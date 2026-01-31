@@ -21,16 +21,43 @@ OpenInt-testdata/
 ### Generate Test Data
 
 ```bash
-# Generate full dataset
-python -m generators.main --full
+cd openint-testdata
 
-# Generate quick test dataset
-python -m generators.main --quick
+# Generate full dataset (customers, transactions, disputes)
+python generators/generate_openint_test_data.py
+
+# Generate only disputes (requires existing transaction fact tables)
+# Uses Ollama for creative dispute descriptions when available
+python generators/generate_openint_test_data.py --only-disputes --num-disputes 500
+python generators/generate_openint_test_data.py --only-disputes --no-llm  # template descriptions
+python generators/generate_openint_test_data.py --only-disputes --clean-run  # overwrite (default: append)
 
 # Generate specific data types
-python -m generators.main --only customers
-python -m generators.main --only transactions
+python generators/generate_openint_test_data.py --only-customers
+python generators/generate_openint_test_data.py --only-transactions
+python generators/generate_openint_test_data.py --only-static
 ```
+
+Disputes are created **only** from existing transaction data: each dispute references a valid `customer_id` and `transaction_id` (both 10-digit) from the respective transaction CSVs. Output files mirror transaction types: `ach_disputes.csv`, `credit_disputes.csv`, `debit_disputes.csv`, `wire_disputes.csv`, `check_disputes.csv`, `atm_disputes.csv`.
+
+**Output directory:** Data is always written to `openint-testdata/testdata/` (regardless of CWD).
+
+**Append vs overwrite:** By default, new records are appended to existing files. Use `--clean-run` to overwrite instead.
+
+### Load Data into Neo4j
+
+From repo root (with `testdata/` containing `dimensions/` and `facts/` from the generator):
+
+```bash
+# Full load: transactions + disputes + customer enrichment (Customer nodes get full details)
+python openint-testdata/loaders/load_openint_data_to_neo4j.py
+
+# Only enrich existing Customer nodes from dimensions/customers.csv (fix "Only ID stored" in UI)
+# Reads customer_ids from transactions + disputes CSVs, or from Neo4j if no CSVs
+python openint-testdata/loaders/load_openint_data_to_neo4j.py --only-enrich
+```
+
+Ensure `testdata/dimensions/customers.csv` and `testdata/facts/*.csv` exist (run the generator first).
 
 ### Load Data into Milvus
 

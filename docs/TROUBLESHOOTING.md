@@ -127,6 +127,39 @@ tail -f .agent_system.log
 ./start_all.sh --with-ui
 ```
 
+## Milvus: Collection Empty / No Search Results
+
+If the Milvus collection exists but search returns no data:
+
+### 1. Run the diagnostic script
+```bash
+python openint-vectordb/check_milvus.py
+```
+This checks connection, entity count, and search.
+
+### 2. Verify loader found testdata
+The loader looks for `openint-testdata/testdata/`. Generate data first:
+```bash
+cd openint-testdata
+python generators/generate_openint_test_data.py
+python loaders/load_openint_data_to_milvus.py
+```
+
+### 3. Ensure .env is used
+Both loader and backend use `MILVUS_COLLECTION` from `.env` (repo root). If they use different collections, data won't appear. Run the loader from repo root or openint-testdata so it finds the same `.env`:
+```bash
+# From repo root
+python openint-testdata/loaders/load_openint_data_to_milvus.py
+```
+
+### 4. Check embedding model
+The loader needs `sentence-transformers` for embeddings. If it fails, batches are skipped:
+```bash
+pip install sentence-transformers
+```
+
+---
+
 ## Environment Variables
 
 Set these if needed:

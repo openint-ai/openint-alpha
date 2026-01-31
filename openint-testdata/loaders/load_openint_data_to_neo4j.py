@@ -5,6 +5,9 @@ Order: (1) Load all transactions first, creating minimal Customer nodes from tra
 customer_id and HAS_TRANSACTION; (2) Load disputes (OPENED_DISPUTE, REFERENCES); (3) Enrich
 Customer nodes from customers.csv only for customer_ids that appear in the facts.
 This avoids loading the full customers dimension; only customers with transactions/disputes get full attributes.
+
+ID handling: _to_id_str() normalizes customer_id, transaction_id, dispute_id for consistency
+with Milvus (e.g. "1000003621" not "1000003621.0"). Customer nodes store id as string.
 """
 
 import os
@@ -55,11 +58,17 @@ LOAD_SPEC = {
     "credit_transactions": ("facts", "credit_transactions.csv", "Transaction", "transaction_id", "credit"),
     "debit_transactions": ("facts", "debit_transactions.csv", "Transaction", "transaction_id", "debit"),
     "check_transactions": ("facts", "check_transactions.csv", "Transaction", "transaction_id", "check"),
-    "disputes": ("facts", "disputes.csv", "Dispute", "dispute_id", None),
+    # Disputes: type-specific files (ach_disputes.csv, credit_disputes.csv, etc.)
+    "ach_disputes": ("facts", "ach_disputes.csv", "Dispute", "dispute_id", None),
+    "credit_disputes": ("facts", "credit_disputes.csv", "Dispute", "dispute_id", None),
+    "debit_disputes": ("facts", "debit_disputes.csv", "Dispute", "dispute_id", None),
+    "wire_disputes": ("facts", "wire_disputes.csv", "Dispute", "dispute_id", None),
+    "check_disputes": ("facts", "check_disputes.csv", "Dispute", "dispute_id", None),
+    "atm_disputes": ("facts", "atm_disputes.csv", "Dispute", "dispute_id", None),
 }
 
 # Batch size for Cypher UNWIND
-DEFAULT_BATCH = 5000
+DEFAULT_BATCH = 1000
 
 
 def _schema_field_names(dataset_name: str) -> Optional[List[str]]:
@@ -78,7 +87,7 @@ def collect_customer_ids_from_facts(
     max_transactions: Optional[int],
     max_disputes: Optional[int],
 ) -> set:
-    """Scan transaction and dispute CSVs and return the set of customer_ids that appear in facts."""
+    """Scan transaction and dispute CSVs and return the set of customer_ids (normalized strings, e.g. 1000003621)."""
     seen: set = set()
     for dataset_name, spec in LOAD_SPEC.items():
         if spec[2] == "Transaction":
@@ -89,16 +98,49 @@ def collect_customer_ids_from_facts(
             df = pd.read_csv(csv_path, usecols=["customer_id"])
             if max_transactions:
                 df = df.head(max_transactions)
-            seen.update(df["customer_id"].astype(str).unique())
-    # disputes
-    subdir, fname, _, _, _ = LOAD_SPEC["disputes"]
-    csv_path = (dimensions_dir if subdir == "dimensions" else facts_dir) / fname
-    if csv_path.exists():
-        df = pd.read_csv(csv_path, usecols=["customer_id"])
-        if max_disputes:
-            df = df.head(max_disputes)
-        seen.update(df["customer_id"].astype(str).unique())
+            for v in df["customer_id"].dropna().unique():
+                s = _to_id_str(v)
+                if s:
+                    seen.add(s)
+    # disputes (type-specific: ach_disputes, credit_disputes, etc.)
+    for dataset_name, spec in LOAD_SPEC.items():
+        if spec[2] != "Dispute":
+            continue
+        subdir, fname, _, _, _ = spec
+        csv_path = (dimensions_dir if subdir == "dimensions" else facts_dir) / fname
+        if csv_path.exists():
+            df = pd.read_csv(csv_path, usecols=["customer_id"])
+            if max_disputes:
+                df = df.head(max_disputes)
+            for v in df["customer_id"].dropna().unique():
+                s = _to_id_str(v)
+                if s:
+                    seen.add(s)
     return seen
+
+
+def collect_customer_ids_from_graph(client: Neo4jClient) -> set:
+    """Return the set of customer ids (normalized strings, e.g. 1000003621) for all Customer nodes in Neo4j."""
+    try:
+        rows = client.run("MATCH (c:Customer) RETURN c.id AS id")
+        return {_to_id_str(r["id"]) for r in (rows or []) if r.get("id") is not None}
+    except Exception:
+        return set()
+
+
+def _to_id_str(val: Any) -> str:
+    """Normalize ID for Neo4j: handle int, float (1000005586.0), str. Always returns clean numeric string."""
+    if pd.isna(val) or val is None:
+        return ""
+    try:
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            return str(int(val))
+        s = str(val).strip()
+        if "." in s and s.replace(".", "", 1).replace("-", "", 1).isdigit():
+            return str(int(float(s)))
+        return s
+    except (ValueError, TypeError):
+        return str(val).strip()
 
 
 def _row_to_props(row: pd.Series, exclude: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -145,7 +187,7 @@ def load_customers(
             batch = df.iloc[start : start + batch_size]
             rows = []
             for _, row in batch.iterrows():
-                r = {id_key: str(row[id_key])}
+                r = {id_key: _to_id_str(row[id_key])}
                 r.update(_row_to_props(row, exclude=[id_key]))
                 rows.append(r)
             set_parts = [f"c.{k} = row.{k}" for k in keys]
@@ -178,23 +220,24 @@ def enrich_customers(
     print(f"\n📂 Enriching Customers from {csv_path.name} (only {len(allowed_ids):,} ids from facts)...")
     try:
         df = pd.read_csv(csv_path)
-        df = df[df["customer_id"].astype(str).isin(allowed_ids)]
+        df = df[df["customer_id"].apply(lambda v: _to_id_str(v) in allowed_ids)]
         if max_records:
             df = df.head(max_records)
         if df.empty:
             print("   No customer rows in CSV matching fact customer_ids")
             return {"success": True, "total_loaded": 0, "table_name": "customers_enrich"}
         id_key = "customer_id"
-        if schema_fields:
-            keys = [k for k in schema_fields if k != id_key and k in df.columns]
-        else:
-            keys = [k for k in df.columns if k != id_key]
+        # Use all CSV columns (except id) so Customer nodes get complete details (name, email, address, etc.)
+        keys = [k for k in df.columns if k != id_key]
+        if not keys:
+            print("   No extra columns in CSV beyond customer_id")
+            return {"success": True, "total_loaded": 0, "table_name": "customers_enrich"}
         total = 0
         for start in range(0, len(df), batch_size):
             batch = df.iloc[start : start + batch_size]
             rows = []
             for _, row in batch.iterrows():
-                r = {id_key: str(row[id_key])}
+                r = {id_key: _to_id_str(row[id_key])}
                 r.update(_row_to_props(row, exclude=[id_key]))
                 rows.append(r)
             set_parts = [f"c.{k} = row.{k}" for k in keys]
@@ -239,8 +282,8 @@ def load_transactions(
             rows = []
             for _, row in batch.iterrows():
                 r = {
-                    "transaction_id": str(row["transaction_id"]),
-                    "customer_id": str(row["customer_id"]),
+                    "transaction_id": _to_id_str(row["transaction_id"]),
+                    "customer_id": _to_id_str(row["customer_id"]),
                     "transaction_type": transaction_type,
                 }
                 for k in other:
@@ -300,9 +343,9 @@ def load_disputes(
             rows = []
             for _, row in batch.iterrows():
                 r = {
-                    "dispute_id": str(row["dispute_id"]),
-                    "customer_id": str(row["customer_id"]),
-                    "transaction_id": str(row["transaction_id"]),
+                    "dispute_id": _to_id_str(row["dispute_id"]),
+                    "customer_id": _to_id_str(row["customer_id"]),
+                    "transaction_id": _to_id_str(row["transaction_id"]),
                     "transaction_type": str(row["transaction_type"]).lower(),
                 }
                 for k in other:
@@ -353,6 +396,21 @@ def main():
     parser.add_argument("--only-transactions", action="store_true", help="Load only transaction tables")
     parser.add_argument("--only-disputes", action="store_true", help="Load only disputes")
     parser.add_argument("--skip-disputes", action="store_true", help="Skip disputes (load customers + transactions only)")
+    parser.add_argument(
+        "--only-enrich",
+        action="store_true",
+        help="Only enrich existing Customer nodes from dimensions/customers.csv (read customer_ids from transactions + disputes CSVs, or from Neo4j if none)",
+    )
+    parser.add_argument(
+        "--clean",
+        action="store_true",
+        help="Delete all nodes and relationships in Neo4j before loading",
+    )
+    parser.add_argument(
+        "--clean-only",
+        action="store_true",
+        help="Delete all nodes and relationships in Neo4j and exit (no load)",
+    )
     args = parser.parse_args()
 
     global BASE_DIR, DIMENSIONS_DIR, FACTS_DIR
@@ -360,6 +418,22 @@ def main():
         BASE_DIR = Path(args.data_dir)
         DIMENSIONS_DIR = BASE_DIR / "dimensions"
         FACTS_DIR = BASE_DIR / "facts"
+
+    # Clean-only: connect, delete all, exit
+    if args.clean_only:
+        try:
+            client = Neo4jClient()
+            client.connect()
+            if not client.verify_connectivity():
+                print("❌ Cannot connect to Neo4j")
+                return
+            print("✅ Connected to Neo4j")
+            print("🧹 Deleting all nodes and relationships...")
+            client.delete_all()
+            print("✅ Done.")
+        except Exception as e:
+            print(f"❌ {e}")
+        return
 
     if not BASE_DIR.exists():
         print(f"❌ Data directory not found: {BASE_DIR}")
@@ -384,20 +458,37 @@ def main():
         print(f"❌ Neo4j connection failed: {e}")
         return
 
+    if args.clean:
+        print("\n🧹 Cleaning Neo4j (deleting all nodes and relationships)...")
+        client.delete_all()
+        print("   Done.\n")
+
     results = []
-    load_tx = args.only_transactions or (not args.only_customers and not args.only_disputes)
-    load_disp = args.only_disputes or (not args.skip_disputes and not args.only_customers and not args.only_transactions)
+    load_tx = args.only_transactions or (not args.only_customers and not args.only_disputes and not args.only_enrich)
+    load_disp = args.only_disputes or (not args.skip_disputes and not args.only_customers and not args.only_transactions and not args.only_enrich)
     # Reverse lookup: enrich customers only for ids that appear in facts (unless --only-customers)
     load_cust_full = args.only_customers
-    load_cust_enrich = (not args.only_customers and not args.only_transactions and not args.only_disputes) or (load_tx or load_disp)
+    load_cust_enrich = args.only_enrich or (
+        (not args.only_customers and not args.only_transactions and not args.only_disputes) or (load_tx or load_disp)
+    )
 
-    # Optional: collect customer_ids from facts so we only enrich those (avoids full customers.csv scan in memory for enrich)
-    allowed_customer_ids = set()
-    if load_cust_enrich and (load_tx or load_disp):
-        allowed_customer_ids = collect_customer_ids_from_facts(
-            FACTS_DIR, DIMENSIONS_DIR, args.max_transactions, args.max_disputes
-        )
-        print(f"📋 Reverse lookup: {len(allowed_customer_ids):,} distinct customer_ids from facts")
+    # Collect customer_ids: from fact CSVs (transactions + disputes) or from Neo4j when --only-enrich
+    allowed_customer_ids: set = set()
+    if load_cust_enrich:
+        if load_tx or load_disp or args.only_enrich:
+            max_tx = None if args.only_enrich else args.max_transactions
+            max_disp = None if args.only_enrich else args.max_disputes
+            allowed_customer_ids = collect_customer_ids_from_facts(
+                FACTS_DIR, DIMENSIONS_DIR, max_tx, max_disp
+            )
+            if allowed_customer_ids:
+                print(f"📋 From transactions + disputes CSVs: {len(allowed_customer_ids):,} distinct customer_ids")
+        if args.only_enrich and not allowed_customer_ids:
+            allowed_customer_ids = collect_customer_ids_from_graph(client)
+            if allowed_customer_ids:
+                print(f"📋 From Neo4j Customer nodes: {len(allowed_customer_ids):,} distinct customer ids to enrich")
+            else:
+                print("⚠️ No customer_ids from CSVs or graph. Ensure testdata/facts/*.csv exist or load transactions/disputes first.")
 
     # (1) Transactions first: create minimal Customer + Transaction + HAS_TRANSACTION
     if load_tx:
@@ -416,23 +507,29 @@ def main():
             )
             results.append(r)
 
-    # (2) Disputes: OPENED_DISPUTE, REFERENCES (Customer MERGEd if not already present)
-    if load_disp and "disputes" in LOAD_SPEC:
-        subdir, fname, _, _, _ = LOAD_SPEC["disputes"]
-        csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
-        r = load_disputes(
-            client,
-            csv_path,
-            batch_size=args.batch_size,
-            max_records=args.max_disputes,
-            schema_fields=_schema_field_names("disputes"),
-        )
-        results.append(r)
+    # (2) Disputes: OPENED_DISPUTE, REFERENCES (from type-specific CSVs: ach_disputes, credit_disputes, etc.)
+    if load_disp:
+        max_per_file = (args.max_disputes // 6) if args.max_disputes else None
+        for dataset_name, spec in LOAD_SPEC.items():
+            if spec[2] != "Dispute":
+                continue
+            subdir, fname, _, _, _ = spec
+            csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
+            r = load_disputes(
+                client,
+                csv_path,
+                batch_size=args.batch_size,
+                max_records=max_per_file,
+                schema_fields=_schema_field_names("disputes"),
+            )
+            results.append(r)
 
-    # (3) Enrich Customer nodes from customers.csv only for customer_ids that appear in facts
+    # (3) Enrich Customer nodes from customers.csv with full details (all properties from schema/CSV)
     if load_cust_enrich and allowed_customer_ids and "customers" in LOAD_SPEC:
         subdir, fname, _, _, _ = LOAD_SPEC["customers"]
         csv_path = (DIMENSIONS_DIR if subdir == "dimensions" else FACTS_DIR) / fname
+        if args.only_enrich:
+            print(f"📂 Enrich-only: updating Customer nodes with all properties from {csv_path}")
         r = enrich_customers(
             client,
             csv_path,

@@ -216,6 +216,9 @@ class AgentOrchestrator:
         if any(word in query_lower for word in ["related", "connected", "path", "link", "dispute", "account", "relationship", "graph"]):
             agents = self.registry.find_agents_by_capability("graph")
             selected_agents.extend(agents)
+        if any(word in query_lower for word in ["details", "lookup", "information about", "customer id", "transaction id", "dispute id", "enrich"]):
+            agents = self.registry.find_agents_by_capability("enrich")
+            selected_agents.extend(agents)
         
         if any(word in query_lower for word in ["suggest", "example question", "what can i ask", "generate sentence", "sample query", "example query", "analyst question", "business analyst"]):
             agents = self.registry.find_agents_by_capability("suggestions")

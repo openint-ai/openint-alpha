@@ -1,5 +1,5 @@
 """
-Schema Generator Agent (sg-agent).
+Sentence Generation Agent (sa-agent).
 Connects to DataHub (or uses local schema), reads dataset schemas, and uses the best
 available generative model to produce example sentences that analysts, customer care,
 and business users would ask in a banking context.
@@ -24,11 +24,11 @@ from communication.agent_state_store import (
     SCHEMA_CACHE_TTL,
     is_available as state_store_available,
 )
-from sg_agent.datahub_client import get_schema_and_source
-from sg_agent.sentence_generator import generate_sentences
+from sa_agent.datahub_client import get_schema_and_source
+from sa_agent.sentence_generator import generate_sentences
 
 logger = logging.getLogger(__name__)
-AGENT_NAME = "sg-agent"
+AGENT_NAME = "sa-agent"
 
 
 class SchemaGeneratorAgent(BaseAgent):
@@ -64,8 +64,8 @@ class SchemaGeneratorAgent(BaseAgent):
             )
         ]
         super().__init__(
-            name="sg-agent",
-            description="Schema-aware sentence generator: connects to DataHub, reads schema, and generates example analyst/customer-care/business questions",
+            name="sa-agent",
+            description="Sentence generation: connects to DataHub, reads schema, and generates example analyst/customer-care/business questions",
             capabilities=capabilities,
         )
         self._schema_cache: Optional[Dict[str, Dict[str, Any]]] = None
@@ -76,7 +76,7 @@ class SchemaGeneratorAgent(BaseAgent):
         if state_store_available():
             cached = get_agent_state(AGENT_NAME, "schema")
             if cached is not None and isinstance(cached, dict):
-                logger.debug("sg-agent: schema loaded from Redis (%s datasets)", len(cached))
+                logger.debug("sa-agent: schema loaded from Redis (%s datasets)", len(cached))
                 return cached
         # In-memory fallback
         if self._schema_cache is not None:

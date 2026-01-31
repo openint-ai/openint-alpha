@@ -1,5 +1,5 @@
 """
-DataHub client for openint-sg-agent.
+DataHub client for sa-agent.
 Connects to DataHub running locally and reads dataset schemas.
 Falls back to openint-datahub/schemas.py when DataHub is unavailable.
 """
@@ -12,13 +12,16 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-# openint-sg-agent is a sibling of openint-datahub under repo root
-_THIS_DIR = Path(__file__).resolve().parent
-_REPO_ROOT = _THIS_DIR.parent
+# Repo root: openint-agents/sa_agent -> openint-agents -> repo root
+_AGENTS_DIR = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _AGENTS_DIR.parent
 _OPENINT_DATAHUB = _REPO_ROOT / "openint-datahub"
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+if str(_AGENTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_AGENTS_DIR))
 
+# Known dataset names (from openint-datahub/schemas.py) for building URNs when reading from DataHub
 DEFAULT_DATASET_NAMES = [
     "customers", "ach_transactions", "wire_transactions", "credit_transactions",
     "debit_transactions", "check_transactions", "disputes",
@@ -67,7 +70,10 @@ def _schema_from_datahub_entity(schema_aspect: Optional[Any]) -> Optional[Dict[s
 
 
 def get_schema_from_datahub() -> Optional[Dict[str, Dict[str, Any]]]:
-    """Connect to DataHub and read dataset schemas. Returns None on failure."""
+    """
+    Connect to DataHub and read dataset schemas.
+    Returns dict mapping dataset name -> { description, category, fields } or None on failure.
+    """
     try:
         from datahub.ingestion.graph.client import DataHubGraph
         from datahub.ingestion.graph.config import DatahubClientConfig
@@ -99,6 +105,7 @@ def get_schema_from_datahub() -> Optional[Dict[str, Dict[str, Any]]]:
             entity = graph.get_entity(entity_urn=urn)
             if not entity:
                 continue
+            # Entity can be a dict with 'dataset' key or similar; aspect may be under aspects
             aspects = getattr(entity, "get", None)
             if aspects is None:
                 aspects = getattr(entity, "aspects", {})
@@ -118,8 +125,22 @@ def get_schema_from_datahub() -> Optional[Dict[str, Dict[str, Any]]]:
     return out if out else None
 
 
+def get_schema() -> Dict[str, Dict[str, Any]]:
+    """
+    Get dataset schema: from DataHub if available, else from openint-datahub/schemas.py.
+    Returns dict mapping dataset name -> { description, category, fields }.
+    """
+    schema, _ = get_schema_and_source()
+    return schema
+
+
 def get_schema_and_source() -> tuple[Dict[str, Dict[str, Any]], str]:
-    """Returns (schema, source) where source is 'datahub' or 'openint-datahub'."""
+    """
+    Get dataset schema and its source for LLM context.
+    Returns (schema, source) where source is "datahub" (DataHub assets and schema)
+    or "openint-datahub" (fallback when DataHub unavailable).
+    Ensures Ollama/LLM context is always provided via DataHub assets and schema when available.
+    """
     schema = get_schema_from_datahub()
     if schema:
         logger.debug("Loaded schema from DataHub (%s datasets)", len(schema))

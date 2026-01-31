@@ -1,8 +1,0 @@
-# OpenInt Schema Generator Agent (standalone)
-# Schema from DataHub or openint-datahub; sentence generation via Ollama
-
-python-dotenv>=1.0.0
-redis>=5.0.0
-
-# Optional: DataHub SDK for reading schema from DataHub
-# acryl-datahub

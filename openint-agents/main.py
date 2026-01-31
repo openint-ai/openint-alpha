@@ -54,12 +54,12 @@ def initialize_agents(orchestrator: Optional[AgentOrchestrator] = None):
     except Exception as e:
         print(f"⚠️  Graph agent not loaded: {e}")
 
-    # Initialize Schema Generator Agent (sg-agent)
+    # Initialize Schema Agent (sa-agent)
     try:
-        from sg_agent.schema_generator_agent import SchemaGeneratorAgent
-        sg_agent = SchemaGeneratorAgent()
-        agents_list.append(sg_agent)
-        print(f"✅ Initialized {sg_agent.name}")
+        from sa_agent.schema_generator_agent import SchemaGeneratorAgent
+        sa_agent = SchemaGeneratorAgent()
+        agents_list.append(sa_agent)
+        print(f"✅ Initialized {sa_agent.name}")
     except Exception as e:
         print(f"⚠️  Schema generator agent not loaded: {e}")
 
@@ -71,6 +71,15 @@ def initialize_agents(orchestrator: Optional[AgentOrchestrator] = None):
         print(f"✅ Initialized {modelmgmt_agent.name}")
     except Exception as e:
         print(f"⚠️  Model management agent not loaded: {e}")
+
+    # Initialize Enrich Agent (enrich-agent): extracts IDs from results, looks up in Neo4j
+    try:
+        from enrich_agent.enrich_agent import EnrichAgent
+        enrich_agent = EnrichAgent()
+        agents_list.append(enrich_agent)
+        print(f"✅ Initialized {enrich_agent.name}")
+    except Exception as e:
+        print(f"⚠️  Enrich agent not loaded: {e}")
 
     return agents_list
 

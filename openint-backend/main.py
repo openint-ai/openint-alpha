@@ -140,6 +140,8 @@ CORS_ORIGINS = os.getenv('CORS_ORIGINS', 'http://localhost:3000').split(',')
 CORS(app, origins=CORS_ORIGINS)
 
 # MODEL_METADATA and DROPDOWN_MODEL_IDS are imported from modelmgmt_agent when available (single source of truth for the 3 UI dropdown models).
+# Default embedding model for all agents (vectorization): all-MiniLM-L6-v2 (384 dims, fast)
+DEFAULT_EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2")
 
 # Observability: JSON logging + OpenTelemetry tracing (idempotent)
 setup_observability(app)
@@ -193,6 +195,12 @@ def _log_ui_response(response):
 # Default: 127.0.0.1:6379 (backend on host → Redis in Docker with -p 6379:6379).
 # Backend in Docker: set REDIS_HOST to the Redis service name (e.g. redis) and ensure same Docker network.
 REDIS_CACHE_TTL_SECONDS = 60  # Same query served from Redis if repeated within 1 minute
+GRAPH_QUERIES_REDIS_KEY = "graph:queries:list"  # LPUSH of natural-language questions for graph demo
+GRAPH_QUERIES_TTL_SECONDS = 30 * 24 * 3600  # 30 days – cache graph questions for reuse
+GRAPH_QUERIES_MAX = 100  # Keep last N questions in list
+MULTI_AGENT_QUERIES_REDIS_KEY = "multi_agent:queries:list"  # LPUSH of textbox questions for multi-agent demo
+MULTI_AGENT_QUERIES_TTL_SECONDS = 30 * 24 * 3600  # 30 days – cache for History pane
+MULTI_AGENT_QUERIES_MAX = 100  # Keep last N questions
 REDIS_DEFAULT_HOST = "127.0.0.1"
 REDIS_DEFAULT_PORT = 6379
 REDIS_CONNECT_TIMEOUT = 1  # Fail fast when Redis is down so we don't block every request
@@ -265,16 +273,22 @@ if AGENT_SYSTEM_AVAILABLE:
     try:
         from agents.search_agent import SearchAgent
         from agents.graph_agent import GraphAgent
-        from sg_agent.schema_generator_agent import SchemaGeneratorAgent
+        from sa_agent.schema_generator_agent import SchemaGeneratorAgent
         from modelmgmt_agent.modelmgmt_agent import ModelMgmtAgent
+        from enrich_agent.enrich_agent import EnrichAgent
         search_agent = SearchAgent()
         _agent_instances.append(search_agent)
         graph_agent = GraphAgent()
         _agent_instances.append(graph_agent)
-        sg_agent = SchemaGeneratorAgent()
-        _agent_instances.append(sg_agent)
+        sa_agent = SchemaGeneratorAgent()
+        _agent_instances.append(sa_agent)
         modelmgmt_agent = ModelMgmtAgent()
         _agent_instances.append(modelmgmt_agent)
+        try:
+            enrich_agent = EnrichAgent()
+            _agent_instances.append(enrich_agent)
+        except Exception as e:
+            logger.info("enrich-agent not loaded: %s", e)
         agent_instances_map = {a.name: a for a in _agent_instances}
         agent_runner = None
         try:
@@ -304,7 +318,7 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
     Shows semantic highlights from the finance-specific model.
     """
     # Always use finance model
-    finance_model = "mukaj/fin-mpnet-base"
+    finance_model = DEFAULT_EMBEDDING_MODEL
     selected_model = finance_model
     import json
     
@@ -813,9 +827,9 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
     # Generate query vector using finance model
     query_vector = []
     # Always use finance-specific model
-    finance_model = "mukaj/fin-mpnet-base"
+    finance_model = DEFAULT_EMBEDDING_MODEL
     embedding_model = finance_model
-    embedding_dims = 768  # Finance MPNet model dimension
+    embedding_dims = 384  # all-MiniLM-L6-v2 dimension
     
     try:
         # Try to get MilvusClient from search agent
@@ -867,7 +881,7 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
     
     # Build result with multi-model highlights
     # Always use finance model
-    finance_model = "mukaj/fin-mpnet-base"
+    finance_model = DEFAULT_EMBEDDING_MODEL
     final_embedding_model = finance_model
     
     result = {
@@ -903,7 +917,7 @@ def _build_debug_info(query: str, orchestrator: Any, selected_model: Optional[st
         result["multi_model_analysis"]["model_scores"] = multi_model_result.get("model_scores", {})
         
         # Always use finance model
-        finance_model = "mukaj/fin-mpnet-base"
+        finance_model = DEFAULT_EMBEDDING_MODEL
         result["embedding_model"] = finance_model
         result["recommended_model"] = finance_model
     
@@ -972,12 +986,12 @@ def chat():
     debug_mode = data.get("debug", False)
     multi_model_analysis = data.get("multi_model_analysis", False)  # New flag for multi-model analysis
     # Always use finance model
-    selected_embedding_model = "mukaj/fin-mpnet-base"
+    selected_embedding_model = DEFAULT_EMBEDDING_MODEL
     
     # Always use finance-specific model
-    finance_model = "mukaj/fin-mpnet-base"
+    finance_model = DEFAULT_EMBEDDING_MODEL
     embedding_model = finance_model
-    embedding_dims = 768  # Finance MPNet model dimension
+    embedding_dims = 384  # all-MiniLM-L6-v2 dimension
 
     # Redis cache: same query + model + debug => return cached response
     cache_key_raw = f"{user_query}|{embedding_model}|{debug_mode}"
@@ -1006,7 +1020,7 @@ def chat():
             from milvus_client import MilvusClient
             temp_client = MilvusClient(embedding_model=finance_model)
             embedding_model = getattr(temp_client, 'embedding_model_name', finance_model)
-            embedding_dims = getattr(temp_client, 'embedding_dim', 768)
+            embedding_dims = getattr(temp_client, 'embedding_dim', 384)
         except:
             pass  # Use defaults if can't get from client
         
@@ -1016,7 +1030,7 @@ def chat():
         multi_model_result = None
         
         # Always use finance model for search
-        finance_model = "mukaj/fin-mpnet-base"
+        finance_model = DEFAULT_EMBEDDING_MODEL
         metadata["embedding_model"] = finance_model
         metadata["best_model"] = finance_model
         
@@ -1384,7 +1398,7 @@ def chat():
         )
         # Build debug information if requested
         debug_info = None
-        finance_model = "mukaj/fin-mpnet-base"
+        finance_model = DEFAULT_EMBEDDING_MODEL
         if debug_mode:
             debug_info = _build_debug_info(user_query, orchestrator, finance_model)
         
@@ -1599,7 +1613,7 @@ def _run_semantic_interpret(query: str, model_name: str) -> tuple:
             "error": "modelmgmt-agent not available"
         }, 503
 
-    default_model = "mukaj/fin-mpnet-base"
+    default_model = DEFAULT_EMBEDDING_MODEL
     if not model_name or not model_name.strip():
         model_name = default_model
     if not query or not query.strip():
@@ -1687,10 +1701,10 @@ def semantic_interpret_get():
     Easy to use from browser, curl, and server-to-server.
     """
     sentence = request.args.get("sentence", "").strip()
-    model = request.args.get("model", "mukaj/fin-mpnet-base").strip()
+    model = request.args.get("model", DEFAULT_EMBEDDING_MODEL).strip()
     if not sentence:
         return jsonify({"success": False, "error": "Missing query parameter 'sentence'"}), 400
-    data, status = _run_semantic_interpret(sentence, model or "mukaj/fin-mpnet-base")
+    data, status = _run_semantic_interpret(sentence, model or DEFAULT_EMBEDDING_MODEL)
     return jsonify(data), status
 
 
@@ -1733,7 +1747,7 @@ def preview_semantic_analysis():
     """
     Real-time semantic analysis preview for input text.
     Returns semantic tags and highlighted segments for the selected model.
-    Request body: { "query": "sentence text", "model": "mukaj/fin-mpnet-base" }
+    Request body: { "query": "sentence text", "model": "all-MiniLM-L6-v2" }
     """
     if not MULTI_MODEL_AVAILABLE:
         return jsonify({
@@ -1746,7 +1760,7 @@ def preview_semantic_analysis():
         return jsonify({"error": "Missing 'query' in request"}), 400
 
     query = data["query"]
-    model_name = data.get("model", "mukaj/fin-mpnet-base")
+    model_name = data.get("model", DEFAULT_EMBEDDING_MODEL)
     result, status = _run_semantic_interpret(query, model_name)
     return jsonify(result), status
 
@@ -1785,7 +1799,7 @@ def preview_semantic_analysis_multi():
         if not analyzer:
             return jsonify({
                 "success": False,
-                "error": "modelmgmt-agent not available. Install sentence-transformers and ensure at least one embedding model can load (e.g. mukaj/fin-mpnet-base)."
+                "error": "modelmgmt-agent not available. Install sentence-transformers and ensure at least one embedding model can load (e.g. all-MiniLM-L6-v2)."
             }), 503
 
         t0 = time.perf_counter()
@@ -1890,7 +1904,7 @@ def a2a_agent_json_rpc(agent_id):
 @app.route('/api/a2a/run', methods=['POST'])
 def a2a_run():
     """
-    Run A2A flow: sg-agent generates sentences → modelmgmt-agent annotates each.
+    Run A2A flow: sa-agent generates sentences → modelmgmt-agent annotates each.
     Body: { "sentence_count": 3 } (optional, default 3).
     Returns: { "success", "steps", "sentences", "annotations", "error" }.
     """
@@ -1912,16 +1926,16 @@ def a2a_run():
         datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
         if os.path.isdir(datahub_path) and datahub_path not in sys.path:
             sys.path.insert(0, datahub_path)
-        from a2a import handle_sg_agent_message_send, handle_modelmgmt_agent_message_send
-        # Step 1: sg-agent — generate sentences via A2A message/send
-        steps.append({"agent": "sg-agent", "action": "generate", "status": "running"})
+        from a2a import handle_sa_agent_message_send, handle_modelmgmt_agent_message_send
+        # Step 1: sa-agent — generate sentences via A2A message/send
+        steps.append({"agent": "sa-agent", "action": "generate", "status": "running"})
         t0_sg = time.perf_counter()
         msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": f"Generate {sentence_count} sentences"}], "messageId": "a2a-run-1", "kind": "message"}}
-        task_sg = handle_sg_agent_message_send(msg)
-        sg_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
+        task_sg = handle_sa_agent_message_send(msg)
+        sa_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
         if task_sg.get("status", {}).get("state") == "failed":
             steps[-1]["status"] = "failed"
-            err_detail = "sg-agent failed to generate sentences"
+            err_detail = "sa-agent failed to generate sentences"
             msg = task_sg.get("status", {}).get("message") or {}
             for part in msg.get("parts") or []:
                 if part.get("kind") == "text" and part.get("text"):
@@ -1932,7 +1946,7 @@ def a2a_run():
                 "steps": steps,
                 "sentences": [],
                 "annotations": [],
-                "sg_agent_time_ms": sg_agent_time_ms,
+                "sa_agent_time_ms": sa_agent_time_ms,
                 "error": err_detail,
             }), 503
         steps[-1]["status"] = "completed"
@@ -1942,7 +1956,7 @@ def a2a_run():
                 if p.get("kind") == "text" and p.get("text"):
                     sentences.append({"text": p["text"], "category": p.get("metadata", {}).get("category", "Analyst")})
         if not sentences:
-            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "sg_agent_time_ms": sg_agent_time_ms, "error": "No sentences from sg-agent"}), 503
+            return jsonify({"success": False, "steps": steps, "sentences": [], "annotations": [], "sa_agent_time_ms": sa_agent_time_ms, "error": "No sentences from sa-agent"}), 503
         # Step 2: modelmgmt-agent — annotate each sentence via A2A message/send
         steps.append({"agent": "modelmgmt-agent", "action": "annotate", "status": "running", "count": len(sentences)})
         t0_mm = time.perf_counter()
@@ -1964,7 +1978,7 @@ def a2a_run():
             "steps": steps,
             "sentences": sentences,
             "annotations": annotations,
-            "sg_agent_time_ms": sg_agent_time_ms,
+            "sa_agent_time_ms": sa_agent_time_ms,
             "modelmgmt_agent_time_ms": modelmgmt_agent_time_ms,
         })
     except Exception as e:
@@ -1976,10 +1990,440 @@ def a2a_run():
             "steps": steps,
             "sentences": sentences,
             "annotations": annotations,
-            "sg_agent_time_ms": None,
+            "sa_agent_time_ms": None,
             "modelmgmt_agent_time_ms": None,
             "error": str(e),
         }), 500
+
+
+def _sentiment_fallback_local(text: str) -> dict:
+    """Rule-based sentiment when LLM fails. Never shows errors to user."""
+    t = (text or "").lower()
+    if any(w in t for w in ("urgent", "asap", "critical", "emergency")):
+        return {"sentiment": "urgent or concerned", "confidence": 0.6, "emoji": "⚡", "reasoning": "Keyword match: urgency detected."}
+    if any(w in t for w in ("frustrated", "angry", "complaint", "wrong", "error")):
+        return {"sentiment": "frustrated or negative", "confidence": 0.6, "emoji": "😟", "reasoning": "Keyword match: frustration or concern."}
+    if any(w in t for w in ("show", "list", "find", "how many", "which", "tell me")):
+        return {"sentiment": "curious and exploratory", "confidence": 0.65, "emoji": "🔍", "reasoning": "Keyword match: exploratory question."}
+    return {"sentiment": "neutral and analytical", "confidence": 0.55, "emoji": "💭", "reasoning": "Fallback: neutral analytical."}
+
+
+def _sanitize_sentence_fallback(text: str) -> str:
+    """Light sanitization when sa-agent/Ollama fails: remove profanity, normalize whitespace."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    import re
+    original = text
+    # Remove common profanity (case-insensitive)
+    for word in ("fucking", "fuck", "damn", "shit", "ass", "crap"):
+        text = re.sub(rf"\b{re.escape(word)}\b", "", text, flags=re.IGNORECASE)
+    # Normalize whitespace
+    text = " ".join(text.split()).strip()
+    return text if text else original
+
+
+@app.route('/api/multi-agent-demo/run', methods=['GET', 'POST', 'OPTIONS'], strict_slashes=False)
+@app.route('/api/multi_agent_demo/run', methods=['GET', 'POST', 'OPTIONS'], strict_slashes=False)
+def multi_agent_demo_run():
+    """
+    Multi-Agent Demo: sa-agent → modelmgmt → parallel (vectordb + graph) → aggregator-agent.
+    Body: { "message": "user question", "debug": boolean }.
+    Returns: { success, answer, steps, sentence, ... }.
+    """
+    if request.method == 'OPTIONS':
+        return '', 204
+    if request.method == 'GET':
+        return jsonify({
+            'error': 'Method not allowed',
+            'message': 'Use POST with body { "message": "...", "debug": false } to run the multi-agent demo.',
+            'method_received': 'GET',
+        }), 405, {'Allow': 'POST'}
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    data = request.get_json() or {}
+    message = (data.get("message") or "").strip()
+    debug = data.get("debug", False)
+    from_lucky = data.get("from_lucky", False)
+    sa_agent_time_ms_from_client = data.get("sa_agent_time_ms") or data.get("sg_agent_time_ms")
+    if from_lucky and not message:
+        return jsonify({"success": False, "error": "Missing 'message' in request (from_lucky requires the lucky sentence)"}), 400
+    steps = []
+    langgraph_steps = ["select_agents", "run_agents", "aggregate"]
+    sentence = ""
+    sentiment_result = {}
+    chunking_strategies = {}
+    vector_results = []
+    graph_results = {}
+    enriched_map = {}
+    answer = ""
+    try:
+        agent_system_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-agents'))
+        if agent_system_path not in sys.path:
+            sys.path.insert(0, agent_system_path)
+        datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
+        if os.path.isdir(datahub_path) and datahub_path not in sys.path:
+            sys.path.insert(0, datahub_path)
+        # Step 1: sa-agent — textbox is the source. If user typed something: fix errors and add context.
+        # If no sentence given (empty textbox): sa-agent generates one. Both outputs used for vector + graph.
+        if from_lucky:
+            sentence = message
+            steps.append({
+                "agent": "sa-agent",
+                "action": "use_lucky_sentence",
+                "status": "completed",
+                "duration_ms": int(sa_agent_time_ms_from_client) if sa_agent_time_ms_from_client is not None else 0,
+                "sentence": sentence[:200],
+            })
+        else:
+            has_user_sentence = bool(message)
+            steps.append({
+                "agent": "sa-agent",
+                "action": "fix_and_context" if has_user_sentence else "generate",
+                "status": "running",
+            })
+            t0_sg = time.perf_counter()
+            try:
+                from a2a import handle_sa_agent_message_send
+                if has_user_sentence:
+                    prompt = (
+                        "Edit this user query: fix spelling and grammar, remove profanity, preserve intent and all IDs (as 10-digit numbers). "
+                        "You may add a little context for semantic search. Output ONLY the corrected query, nothing else.\n\n"
+                        "USER QUERY:\n"
+                        "---\n"
+                        "{}\n"
+                        "---"
+                    ).format(message)
+                else:
+                    prompt = (
+                        "Generate a single natural-language question that could be asked about a financial or "
+                        "banking dataset (e.g. customers, transactions, accounts, disputes). "
+                        "If you include example IDs, use exactly 10-digit numeric IDs: customer (e.g. 1000000001), transaction (e.g. 1000001234), dispute (e.g. 1000005678). Never use prefixes like CUST or TX. "
+                        "Output only the question, nothing else: "
+                    )
+                msg = {"message": {"role": "user", "parts": [{"kind": "text", "text": prompt}], "messageId": "multi-demo-1", "kind": "message"}}
+                task_sg = handle_sa_agent_message_send(msg)
+                for art in (task_sg.get("artifacts") or []):
+                    for p in art.get("parts") or []:
+                        if p.get("kind") == "text" and p.get("text"):
+                            sentence = (p.get("text") or "").strip()
+                            break
+                if not sentence:
+                    raw = message if has_user_sentence else "What can you tell me about customer accounts and transactions?"
+                    sentence = _sanitize_sentence_fallback(raw) if has_user_sentence else raw
+            except Exception as e:
+                get_logger(__name__).warning("multi-agent-demo sa-agent fallback: %s", e)
+                raw = message if has_user_sentence else "What can you tell me about customer accounts and transactions?"
+                sentence = _sanitize_sentence_fallback(raw) if has_user_sentence else raw
+            sg_ms = round((time.perf_counter() - t0_sg) * 1000)
+            steps[-1]["status"] = "completed"
+            steps[-1]["duration_ms"] = sg_ms
+            steps[-1]["sentence"] = sentence[:200]
+        # Step 2: sentiment-agent (uses sentence from sa-agent)
+        sentiment_result = {}
+        steps.append({"agent": "sentiment-agent", "action": "analyze_sentiment", "status": "running"})
+        t0_sentiment = time.perf_counter()
+        sent_err = None
+        try:
+            from sentiment_agent.sentiment_analyzer import analyze_sentence_sentiment
+            sent_val, conf, emoji_val, reasoning, err = analyze_sentence_sentiment(sentence)
+            if not err and (sent_val or emoji_val):
+                sentiment_result = {"sentiment": sent_val or "", "confidence": conf, "emoji": emoji_val, "reasoning": reasoning}
+            else:
+                sent_err = err or "No sentiment returned"
+        except Exception as e:
+            get_logger(__name__).warning("multi-agent-demo sentiment-agent fallback: %s", e)
+            sent_err = str(e)
+        # Safety net: never show sentiment errors to user — use local fallback
+        if not sentiment_result and sent_err:
+            sentiment_result = _sentiment_fallback_local(sentence)
+            sent_err = None
+        parallel_sm_ms = round((time.perf_counter() - t0_sentiment) * 1000)
+        for s in steps:
+            if s.get("agent") == "sentiment-agent":
+                s["status"] = "completed"
+                s["duration_ms"] = parallel_sm_ms
+                if sentiment_result:
+                    s["sentiment"] = sentiment_result.get("sentiment", "")
+                    s["emoji"] = sentiment_result.get("emoji")
+                    s["confidence"] = sentiment_result.get("confidence")
+                    s["reasoning"] = sentiment_result.get("reasoning")
+
+        # Step 3: parallel — vectordb-agent + graph-agent both use the same retrieval query (sentence)
+        steps.append({"agent": "vectordb-agent", "action": "search", "status": "running"})
+        steps.append({"agent": "graph-agent", "action": "cypher_query", "status": "running"})
+        t0_parallel = time.perf_counter()
+        vec_err = None
+        graph_err = None
+        def run_vectordb():
+            try:
+                vectordb_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-vectordb', 'milvus'))
+                if vectordb_path not in sys.path:
+                    sys.path.insert(0, vectordb_path)
+                from milvus_client import MilvusClient
+                client = MilvusClient(embedding_model="all-MiniLM-L6-v2")
+                results, _, _, _ = client.search(sentence, top_k=10)
+                return results, None
+            except Exception as e:
+                return [], str(e)
+        def run_graph():
+            try:
+                client = _get_neo4j()
+                if not client or not client.verify_connectivity():
+                    return {}, "Neo4j not available"
+                schema_summary = _build_graph_schema_summary(GRAPH_SCHEMA)
+                cypher, err = _generate_cypher_with_ollama(schema_summary, sentence)
+                if err or not cypher:
+                    return {"query": sentence, "cypher": None, "columns": [], "rows": [], "error": err or "No Cypher"}, None
+                rows = client.run(cypher) or []
+                columns = list(rows[0].keys()) if rows and isinstance(rows[0], dict) else []
+                return {"query": sentence, "cypher": cypher, "columns": columns, "rows": rows}, None
+            except Exception as e:
+                return {"query": sentence, "cypher": None, "columns": [], "rows": [], "error": str(e)}, str(e)
+        with ThreadPoolExecutor(max_workers=2) as ex:
+            fut_v = ex.submit(run_vectordb)
+            fut_g = ex.submit(run_graph)
+            res_v, vec_err = fut_v.result()
+            res_g, graph_err = fut_g.result()
+            vector_results = res_v if isinstance(res_v, list) else []
+            graph_results = res_g if isinstance(res_g, dict) else {}
+        parallel_ms = round((time.perf_counter() - t0_parallel) * 1000)
+        for s in steps:
+            if s.get("agent") == "vectordb-agent":
+                s["status"] = "completed" if not vec_err else "failed"
+                s["duration_ms"] = parallel_ms
+                s["result_count"] = len(vector_results)
+            if s.get("agent") == "graph-agent":
+                s["status"] = "completed" if not graph_err else "failed"
+                s["duration_ms"] = parallel_ms
+        # Step 3b: enrich-agent — extract IDs from graph + vector, enrich via Neo4j + graphdb-agent A2A
+        enriched_map = {}
+        enrich_summary = ""
+        steps.append({"agent": "enrich-agent", "action": "lookup_ids", "status": "running"})
+        t0_enrich = time.perf_counter()
+        try:
+            from enrich_agent.enrich_agent import EnrichAgent, lookup_id_in_neo4j, _extract_ids_from_user_query
+            _enrich_agent = EnrichAgent()
+            graph_rows = [r for r in (graph_results.get("rows") or []) if isinstance(r, dict)]
+            vector_for_enrich = [{"content": r.get("content") or "", "metadata": r.get("metadata") or {}} for r in (vector_results or [])]
+            ctx = {
+                "graph_rows": graph_rows,
+                "vector_results": vector_for_enrich,
+                "trusted_only": True,
+                "use_a2a": True,
+                "query": message,
+                "message": message,
+            }
+            resp = _enrich_agent.process_query(message, ctx)
+            enrich_summary = ""
+            if resp.success and resp.results:
+                data = resp.results[0]
+                if isinstance(data, dict):
+                    enriched_map = data.get("enriched") or {}
+                    enrich_summary = (data.get("enrich_summary") or resp.metadata.get("enrich_summary") or "")
+        except Exception as e:
+            get_logger(__name__).warning("enrich-agent failed: %s", e)
+        # Fallback/supplement: when enrich-agent returns empty or incomplete, extract IDs from user query,
+        # vector_results, and graph_rows — then lookup in Neo4j (ensures transaction IDs are enriched too)
+        try:
+            from enrich_agent.enrich_agent import (
+                lookup_id_in_neo4j,
+                _extract_ids_from_user_query,
+                _extract_ids_from_vector_results,
+                _extract_ids_from_graph_rows,
+            )
+            neo4j_client = _get_neo4j()
+            if neo4j_client and neo4j_client.verify_connectivity():
+                ids_to_enrich = []
+                seen = set(enriched_map.keys())
+                for nid, hint in _extract_ids_from_user_query(message or ""):
+                    if nid and nid not in seen:
+                        seen.add(nid)
+                        ids_to_enrich.append((nid, hint))
+                for nid, hint in _extract_ids_from_graph_rows(graph_rows):
+                    if nid and nid not in seen:
+                        seen.add(nid)
+                        ids_to_enrich.append((nid, hint))
+                for nid, hint in _extract_ids_from_vector_results(vector_for_enrich, use_llm_context=True):
+                    if nid and nid not in seen:
+                        seen.add(nid)
+                        ids_to_enrich.append((nid, hint))
+                for nid, hint in ids_to_enrich:
+                    if nid not in enriched_map:
+                        detail = lookup_id_in_neo4j(neo4j_client, nid, hint)
+                        if detail:
+                            try:
+                                from enrich_agent.enrich_agent import _augment_with_a2a
+                                detail = _augment_with_a2a(detail, use_graph=True, user_query=message or "", neo4j_client=neo4j_client)
+                            except Exception:
+                                pass
+                            enriched_map[nid] = detail
+                if enriched_map and not enrich_summary:
+                    from enrich_agent.enrich_agent import _build_enrich_summary
+                    enrich_summary = _build_enrich_summary(enriched_map)
+        except Exception as fb_err:
+            get_logger(__name__).debug("enrich fallback failed: %s", fb_err)
+        enrich_ms = round((time.perf_counter() - t0_enrich) * 1000)
+        for s in steps:
+            if s.get("agent") == "enrich-agent":
+                s["status"] = "completed" if enriched_map else "completed"
+                s["duration_ms"] = enrich_ms
+                s["enriched_count"] = len(enriched_map)
+        # Step 4: aggregator-agent — LLM synthesize answer (after parallel vectordb + graph + enrich)
+        steps.append({"agent": "aggregator-agent", "action": "synthesize", "status": "running"})
+        t0_llm = time.perf_counter()
+        vec_summary = "\n".join((r.get("content") or "")[:300] for r in vector_results[:5]) if vector_results else "No vector results."
+        graph_summary = ""
+        if graph_results.get("rows"):
+            graph_summary = f"Cypher: {graph_results.get('cypher', '')}\nRows: {len(graph_results['rows'])}"
+        else:
+            graph_summary = graph_results.get("error") or "No graph results."
+        chunk_summary = ""
+        if chunking_strategies and isinstance(chunking_strategies, dict):
+            models = chunking_strategies.get("models") or {}
+            for mid, mdata in list(models.items())[:3]:
+                chunk_summary += f"\n[{mid}]: " + str(mdata.get("token_semantics", [])[:5])
+        prompt = f"""User asked: {message}
+Generated sentence: {sentence}
+Semantic analysis (3 strategies): {chunk_summary or 'N/A'}
+Vector search results: {vec_summary}
+Graph results: {graph_summary}
+{f'Enriched entity details (from graphdb-agent via A2A):\n{enrich_summary}' if enrich_summary else ''}
+
+Aggregate and summarize the data above. Use the enriched entity details to list transactions or disputes when relevant (e.g. for a customer). Provide a concise, helpful answer. Preserve all IDs as 10-digit numbers (e.g. 1000000001). Never use prefixes like CUST or TX. Never treat IDs as amounts or round them. Do NOT repeat mobile/email or other contact info when it is already included in an enriched customer string — use the enriched format as-is without appending it again."""
+        import urllib.request
+        import urllib.error
+        import ssl
+        host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+        model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        try:
+            body = json.dumps({
+                "model": model,
+                "messages": [{"role": "user", "content": prompt[:8000]}],
+                "stream": False,
+                "options": {"temperature": 0.3, "num_predict": 512},
+            }).encode("utf-8")
+            req = urllib.request.Request(f"{host}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+                data_llm = json.loads(resp.read().decode("utf-8"))
+            answer = (data_llm.get("message") or {}).get("content") or ""
+            answer = (answer or "").strip()
+        except Exception as e:
+            answer = f"Summary: Vector search returned {len(vector_results)} results. Graph returned {len(graph_results.get('rows') or [])} rows. (LLM synthesis failed: {e})"
+        llm_ms = round((time.perf_counter() - t0_llm) * 1000)
+        steps[-1]["status"] = "completed"
+        steps[-1]["duration_ms"] = llm_ms
+        # Optional retry if answer too short (agents "talk" for better answer)
+        if len(answer) < 50 and not graph_err and vector_results:
+            steps.append({"agent": "aggregator-agent", "action": "refine", "status": "running"})
+            try:
+                ref_prompt = f"Refine and elaborate. User asked: {message}. Previous short answer: {answer}. Vector results (first 2): {vec_summary[:500]}. Preserve all IDs as 10-digit numbers (e.g. 1000000001), never as amounts. Give a fuller answer."
+                body = json.dumps({"model": model, "messages": [{"role": "user", "content": ref_prompt}], "stream": False, "options": {"temperature": 0.3, "num_predict": 512}}).encode("utf-8")
+                req = urllib.request.Request(f"{host}/api/chat", data=body, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=60, context=ctx) as resp:
+                    data_llm = json.loads(resp.read().decode("utf-8"))
+                ref_answer = (data_llm.get("message") or {}).get("content") or ""
+                if ref_answer and len(ref_answer.strip()) > len(answer):
+                    answer = ref_answer.strip()
+            except Exception:
+                pass
+            steps[-1]["status"] = "completed"
+        # Apply enrich-agent's display_names — aggregator does NOT overwrite; enrichment is sole responsibility of enrich-agent
+        if enriched_map and answer:
+            for eid, detail in enriched_map.items():
+                display_name = detail.get("display_name") or f"{detail.get('label', 'Entity')} {eid}"
+                for needle in (eid, eid + ".0"):
+                    if needle and needle in answer:
+                        answer = re.sub(r"\b" + re.escape(needle) + r"\b", display_name, answer)
+        if not answer:
+            answer = "I couldn't generate an answer. Try rephrasing or check that vector DB and graph are loaded."
+        # Cache question in Redis for History pane: push the question that was run (user input or generated) with timestamp
+        redis_client = get_redis()
+        to_cache = (message or sentence or "").strip()
+        if redis_client and to_cache:
+            try:
+                entry = json.dumps({"q": to_cache, "ts": int(time.time())})
+                redis_client.lpush(MULTI_AGENT_QUERIES_REDIS_KEY, entry)
+                redis_client.ltrim(MULTI_AGENT_QUERIES_REDIS_KEY, 0, MULTI_AGENT_QUERIES_MAX - 1)
+                redis_client.expire(MULTI_AGENT_QUERIES_REDIS_KEY, MULTI_AGENT_QUERIES_TTL_SECONDS)
+            except Exception as redis_err:
+                get_logger(__name__).warning("Redis multi-agent queries cache failed", extra={"error": str(redis_err)})
+        return jsonify({
+            "success": True,
+            "answer": answer,
+            "steps": steps,
+            "langgraph_steps": langgraph_steps,
+            "original_query": message,
+            "sentence": sentence,
+            "sentiment": sentiment_result,
+            "chunking_strategies": chunking_strategies,
+            "vector_results": [{"id": r.get("id"), "content": (r.get("content") or "")[:500], "score": r.get("score")} for r in vector_results],
+            "graph_results": graph_results,
+            "enriched_entities": list(enriched_map.keys()) if enriched_map else [],
+            "enriched_details": {k: {"label": v.get("label"), "display_name": v.get("display_name"), "properties": v.get("properties", {})} for k, v in enriched_map.items()} if enriched_map else {},
+        })
+    except Exception as e:
+        get_logger(__name__).exception("multi-agent-demo run failed")
+        return jsonify({
+            "success": False,
+            "answer": "",
+            "steps": steps,
+            "langgraph_steps": langgraph_steps,
+            "original_query": message,
+            "sentence": sentence,
+            "sentiment": sentiment_result,
+            "chunking_strategies": chunking_strategies,
+            "vector_results": vector_results,
+            "graph_results": graph_results,
+            "enriched_entities": [],
+            "enriched_details": {},
+            "error": str(e),
+        }), 500
+
+
+@app.route('/api/multi-agent-demo/queries/recent', methods=['GET'], strict_slashes=False)
+@app.route('/api/multi_agent_demo/queries/recent', methods=['GET'], strict_slashes=False)
+def multi_agent_demo_queries_recent():
+    """
+    Return list of recent multi-agent demo questions (textbox input) from Redis.
+    Used by the UI History pane. Returns { "queries": [ { "query": "...", "issued_at": "ISO8601" }, ... ] } (newest first, deduped).
+    Legacy: plain strings in Redis are returned as { "query": "...", "issued_at": null }.
+    """
+    redis_client = get_redis()
+    if not redis_client:
+        return jsonify({"queries": []}), 200
+    try:
+        raw = redis_client.lrange(MULTI_AGENT_QUERIES_REDIS_KEY, 0, 99)
+        if not raw:
+            return jsonify({"queries": []}), 200
+        seen = set()
+        queries = []
+        for item in raw:
+            item = (item or "").strip()
+            if not item:
+                continue
+            q_text = None
+            issued_at = None
+            try:
+                parsed = json.loads(item)
+                if isinstance(parsed, dict):
+                    q_text = (parsed.get("q") or "").strip()
+                    ts = parsed.get("ts")
+                    if ts is not None:
+                        from datetime import datetime, timezone
+                        issued_at = datetime.fromtimestamp(int(ts), tz=timezone.utc).isoformat().replace("+00:00", "Z")
+                else:
+                    q_text = (parsed if isinstance(parsed, str) else str(parsed)).strip()
+            except (TypeError, ValueError):
+                q_text = item
+            if q_text and q_text not in seen:
+                seen.add(q_text)
+                queries.append({"query": q_text, "issued_at": issued_at})
+        return jsonify({"queries": queries})
+    except Exception as e:
+        get_logger(__name__).warning("Redis multi-agent queries recent failed", extra={"error": str(e)})
+        return jsonify({"queries": []}), 200
 
 
 # --- Neo4j Graph Demo (schema from DataHub + openint-testdata loader) ---
@@ -2062,6 +2506,7 @@ Rules:
 - In RETURN, only use the node variables c, d, t and their properties: c.id, t.id, d.id, t.amount, t.type, d.amount_disputed, d.dispute_status, t.currency, etc. Never use a relationship variable in RETURN (e.g. no r.target; use t.id for transaction_id).
 - Relationship types: HAS_TRANSACTION (Customer->Transaction), OPENED_DISPUTE (Customer->Dispute), REFERENCES (Dispute->Transaction).
 - Every variable in RETURN must appear in MATCH. Add LIMIT 50 for exploration queries.
+- CRITICAL: All customer, transaction, and dispute IDs are exactly 10-digit numbers (e.g. 1000000001, 1000001234). Use them in Cypher as strings: c.id = '1000000001'. Never use prefixes like CUST or TX. Never treat IDs as amounts.
 - Return ONLY the Cypher statement, nothing else.
 
 User question: {question}"""
@@ -2096,6 +2541,84 @@ User question: {question}"""
         return (None, msg)
     except Exception as e:
         return (None, str(e))
+
+
+def _analyze_sentiment_with_ollama(text: str) -> tuple[Optional[str], Optional[float], Optional[str], Optional[str]]:
+    """Analyze sentiment of dispute text via Ollama. Returns (sentiment, confidence, emoji, error). Sentiment is free-form from LLM."""
+    import urllib.request
+    import urllib.error
+    import ssl
+    text = (text or "").strip()
+    if not text:
+        return (None, None, None, "No text provided")
+    host = (os.getenv("OLLAMA_HOST") or "http://localhost:11434").rstrip("/")
+    model = os.getenv("OLLAMA_MODEL") or "llama3.2"
+    prompt = f"""Analyze the sentiment of this dispute/customer complaint text. Generate a short descriptive phrase for the sentiment (e.g. "frustrated and anxious", "cautiously optimistic", "very angry", "resigned but hopeful") and a confidence score. Optionally suggest one emoji that fits the sentiment.
+
+Reply with ONLY a single JSON object, no other text. Format:
+{{"sentiment": "<your short phrase>", "confidence": <number between 0 and 1>, "emoji": "<one emoji, optional>"}}
+
+Dispute text:
+{text[:2000]}"""
+    try:
+        body = json.dumps({
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 256},
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        message = data.get("message") or {}
+        content = (message.get("content") or "").strip()
+        # Strip markdown code block if present
+        if "```" in content:
+            parts = content.split("```", 2)
+            if len(parts) >= 2:
+                content = parts[1].strip()
+                if content.lower().startswith("json"):
+                    content = content[4:].strip()
+        # Find first { ... } and parse
+        start = content.find("{")
+        if start >= 0:
+            depth = 0
+            for i in range(start, len(content)):
+                if content[i] == "{":
+                    depth += 1
+                elif content[i] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        content = content[start : i + 1]
+                        break
+        obj = json.loads(content)
+        sentiment = (obj.get("sentiment") or "").strip()
+        if sentiment:
+            sentiment = sentiment[:300]  # cap length
+        try:
+            confidence = float(obj.get("confidence", 0.5))
+            confidence = max(0.0, min(1.0, confidence))
+        except (TypeError, ValueError):
+            confidence = 0.5
+        emoji = (obj.get("emoji") or "").strip()[:20] or None  # optional, cap length
+        return (sentiment or None, confidence, emoji, None)
+    except urllib.error.URLError as e:
+        msg = str(e.reason) if getattr(e, "reason", None) else str(e)
+        if "Connection refused" in msg or "111" in msg:
+            msg = "Ollama not available"
+        return (None, None, None, msg)
+    except (json.JSONDecodeError, KeyError) as e:
+        return (None, None, None, f"Invalid LLM response: {e}")
+    except Exception as e:
+        return (None, None, None, str(e))
 
 
 def _get_neo4j():
@@ -2174,6 +2697,377 @@ def graph_schema():
         "success": True,
         "schema": GRAPH_SCHEMA,
     })
+
+
+_ALLOWED_NODE_LABELS = frozenset({"Customer", "Transaction", "Dispute"})
+
+
+def _json_serializable(val) -> bool:
+    try:
+        json.dumps(val)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def _node_props_to_dict(node) -> Dict[str, Any]:
+    """Convert a Neo4j Node (or dict) to a JSON-serializable dict of all properties."""
+    if node is None:
+        return {}
+    # Neo4j Node: use .keys() and [] - .items() may not exist on all driver versions
+    if isinstance(node, dict):
+        items_iter = node.items()
+    elif hasattr(node, "keys") and callable(getattr(node, "keys", None)):
+        try:
+            keys = list(node.keys())
+            items_iter = ((k, node[k]) for k in keys)
+        except Exception:
+            try:
+                items_iter = node.items() if hasattr(node, "items") else ()
+            except Exception:
+                items_iter = ()
+    elif hasattr(node, "items") and callable(getattr(node, "items", None)):
+        try:
+            items_iter = node.items()
+        except Exception:
+            items_iter = ()
+    else:
+        return {}
+    out = {}
+    for key, val in items_iter:
+        if isinstance(val, dict):
+            out[key] = _node_props_to_dict(val)
+        elif hasattr(val, "keys") and callable(getattr(val, "keys", None)):
+            out[key] = _node_props_to_dict(val)
+        elif isinstance(val, (list, tuple)):
+            out[key] = [
+                _node_props_to_dict(x) if (hasattr(x, "keys") or isinstance(x, dict)) else (
+                    str(x) if not _json_serializable(x) else x
+                )
+                for x in val
+            ]
+        else:
+            try:
+                json.dumps(val)
+                out[key] = val
+            except (TypeError, ValueError):
+                out[key] = str(val)
+    return out
+
+
+def _format_enrich_display_name(label, node_id, props):
+    """Build human-readable display with meaningful enrichment for Customer, Transaction, Dispute."""
+    props = props or {}
+    id_val = str(props.get("id", node_id))
+    if label == "Customer":
+        first = str(props.get("first_name") or "").strip()
+        last = str(props.get("last_name") or "").strip()
+        name = " ".join(x for x in (first, last) if x).strip() or "Customer"
+        mobile = str(props.get("phone") or props.get("mobile") or "").strip()
+        email = str(props.get("email") or "").strip()
+        parts = [f"ID: {id_val}"]
+        if mobile:
+            parts.append(f"mobile: {mobile}")
+        if email:
+            parts.append(f"email: {email}")
+        return f"{name} ({', '.join(parts)})"
+    if label == "Transaction":
+        parts = []
+        tx_channel = (props.get("type") or "").strip().lower() or "transaction"
+        tx_dir = (props.get("transaction_type") or "").strip()
+        parts.append(f"{tx_channel} {tx_dir}" if tx_dir else tx_channel)
+        if props.get("amount") is not None:
+            try:
+                parts.append(f"${float(props.get('amount')):,.2f}")
+            except (TypeError, ValueError):
+                pass
+        merchant = str(props.get("merchant_name") or props.get("payee_name") or props.get("beneficiary_name") or props.get("description") or "").strip()
+        if merchant:
+            parts.append(f"@{merchant[:35]}{'…' if len(merchant) > 35 else ''}")
+        tx_date = props.get("transaction_date") or props.get("transaction_datetime")
+        if tx_date is not None:
+            d = str(tx_date)[:10] if len(str(tx_date)) >= 10 else str(tx_date)
+            if d:
+                parts.append(d)
+        status = (props.get("status") or "").strip()
+        if status:
+            parts.append(status)
+        prefix = " — ".join(parts) if parts else "Transaction"
+        return f"{prefix} ({id_val})"
+    if label == "Dispute":
+        parts = []
+        amt = props.get("amount_disputed") or props.get("amount")
+        if amt is not None:
+            try:
+                parts.append(f"${float(amt):,.2f}")
+            except (TypeError, ValueError):
+                pass
+        reason = (props.get("dispute_reason") or "").strip()
+        if reason:
+            parts.append(reason[:40] + ("…" if len(reason) > 40 else ""))
+        status = (props.get("dispute_status") or "").strip()
+        if status:
+            parts.append(status)
+        disp_date = props.get("dispute_date") or props.get("dispute_datetime") or props.get("created_at")
+        if disp_date is not None:
+            d = str(disp_date)[:10] if len(str(disp_date)) >= 10 else str(disp_date)
+            if d:
+                parts.append(d)
+        tx_type = (props.get("transaction_type") or "").strip()
+        if tx_type:
+            parts.append(tx_type)
+        prefix = " — ".join(parts) if parts else "Dispute"
+        return f"{prefix} ({id_val})"
+    return f"{label} id: {id_val}"
+
+
+@graph_bp.route("/graph/enrich", methods=["GET"])
+def graph_enrich():
+    """
+    Look up an ID in Neo4j. Uses label hint when provided (from enrich-agent context).
+    For UI popup when user clicks info icon next to an ID.
+    GET ?id=1000000001&label=Transaction  or ?id=1000000001
+    Returns { success, label, id, properties, error? }.
+    """
+    client = _get_neo4j()
+    node_id = (request.args.get("id") or "").strip()
+    label_hint = (request.args.get("label") or "").strip()
+    if not node_id:
+        return jsonify({
+            "success": False,
+            "label": None,
+            "id": node_id,
+            "properties": {},
+            "error": "Missing 'id'. Use ?id=1000000001",
+        }), 400
+    if not client:
+        return jsonify({
+            "success": False,
+            "label": None,
+            "id": node_id,
+            "properties": {},
+            "error": "Neo4j client not available",
+        }), 200
+    try:
+        if not client.verify_connectivity():
+            return jsonify({
+                "success": False,
+                "label": None,
+                "id": node_id,
+                "properties": {},
+                "error": "Cannot connect to Neo4j",
+            }), 200
+        # Normalize ID: handle float (.0), CUST/TX/DBT prefix
+        resolved_id = node_id.strip()
+        if "." in resolved_id and resolved_id.replace(".", "", 1).replace("-", "", 1).isdigit():
+            try:
+                resolved_id = str(int(float(resolved_id)))
+            except (ValueError, TypeError):
+                pass
+        elif any(resolved_id.upper().startswith(p) for p in ("CUST", "TX", "DBT", "DSP")):
+            digits = "".join(c for c in resolved_id if c.isdigit())
+            if digits:
+                try:
+                    n = int(digits)
+                    resolved_id = str(1000000000 + (n % 1000000000))
+                except (TypeError, ValueError):
+                    pass
+        # Type-agnostic lookup: toString(n.id) matches string, int, or float storage
+        id_str_candidates = [resolved_id]
+        if resolved_id != node_id.strip():
+            id_str_candidates.insert(0, node_id.strip())  # try original (e.g. "1000005586.0")
+        if resolved_id.isdigit() and resolved_id + ".0" not in id_str_candidates:
+            id_str_candidates.append(resolved_id + ".0")  # legacy: node stored as "1000005586.0"
+        # Use label hint from enrich-agent context (Customer, Transaction, Dispute) — try that first
+        labels_order = ["Customer", "Transaction", "Dispute"]
+        if label_hint and label_hint in labels_order:
+            labels_order = [label_hint] + [l for l in labels_order if l != label_hint]
+        for label in labels_order:
+            for id_str in id_str_candidates:
+                try:
+                    cypher = f"MATCH (n:{label}) WHERE toString(n.id) = $idStr RETURN n"
+                    rows = client.run(cypher, {"idStr": id_str}) or []
+                    if not rows:
+                        continue
+                    node = rows[0].get("n")
+                    props = _node_props_to_dict(node) if node else {}
+                    resolved_id_str = str(props.get("id", resolved_id))
+                    display_name = _format_enrich_display_name(label, resolved_id_str, props)
+                    return jsonify({
+                        "success": True,
+                        "label": label,
+                        "id": resolved_id_str,
+                        "display_name": display_name,
+                        "properties": props,
+                    })
+                except Exception:
+                    continue
+        return jsonify({
+            "success": False,
+            "label": None,
+            "id": node_id,
+            "properties": {},
+            "error": f"No node found for id {node_id!r}. Ensure Neo4j is running and data is loaded (python -m openint_testdata.loaders.load_openint_data_to_neo4j).",
+        }), 200
+    except Exception as e:
+        get_logger(__name__).warning("graph enrich failed", extra={"id": node_id, "error": str(e)})
+        return jsonify({
+            "success": False,
+            "label": None,
+            "id": node_id,
+            "properties": {},
+            "error": str(e),
+        }), 200
+
+
+@graph_bp.route("/graph/node-details", methods=["GET"])
+def graph_node_details():
+    """
+    Return full properties of a single node by label and id.
+    GET ?label=Customer&id=CUST001 (or Transaction, Dispute).
+    Returns { success, label, id, columns, rows } for table display; rows has one row (all properties).
+    """
+    client = _get_neo4j()
+    label = (request.args.get("label") or "").strip()
+    node_id = (request.args.get("id") or "").strip()
+    if not label or not node_id:
+        return jsonify({
+            "success": False,
+            "label": label,
+            "id": node_id,
+            "columns": [],
+            "rows": [],
+            "error": "Missing 'label' or 'id'. Use ?label=Customer&id=CUST001",
+        }), 400
+    if label not in _ALLOWED_NODE_LABELS:
+        return jsonify({
+            "success": False,
+            "label": label,
+            "id": node_id,
+            "columns": [],
+            "rows": [],
+            "error": f"Invalid label. Use one of: {', '.join(sorted(_ALLOWED_NODE_LABELS))}",
+        }), 400
+    if not client:
+        return jsonify({
+            "success": False,
+            "label": label,
+            "id": node_id,
+            "columns": [],
+            "rows": [],
+            "error": "Neo4j client not available",
+        }), 200
+    try:
+        if not client.verify_connectivity():
+            return jsonify({
+                "success": False,
+                "label": label,
+                "id": node_id,
+                "columns": [],
+                "rows": [],
+                "error": "Cannot connect to Neo4j",
+            }), 200
+        # Type-agnostic: toString(n.id) matches string, int, or float storage; normalize .0 and CUST/TX prefix
+        resolved = node_id.strip()
+        if "." in resolved and resolved.replace(".", "", 1).replace("-", "", 1).isdigit():
+            try:
+                resolved = str(int(float(resolved)))
+            except (ValueError, TypeError):
+                pass
+        elif any(resolved.upper().startswith(p) for p in ("CUST", "TX", "DBT", "DSP")):
+            digits = "".join(c for c in resolved if c.isdigit())
+            if digits:
+                try:
+                    resolved = str(1000000000 + (int(digits) % 1000000000))
+                except (TypeError, ValueError):
+                    pass
+        id_candidates = [resolved, node_id.strip()]
+        if resolved.isdigit():
+            id_candidates.append(resolved + ".0")
+        rows = []
+        for id_str in id_candidates:
+            cypher = f"MATCH (n:{label}) WHERE toString(n.id) = $idStr RETURN n"
+            rows = client.run(cypher, {"idStr": id_str}) or []
+            if rows:
+                break
+        if not rows:
+            return jsonify({
+                "success": True,
+                "label": label,
+                "id": node_id,
+                "columns": [],
+                "rows": [],
+                "cypher": cypher,
+                "params": {"id": node_id},
+                "error": f"No {label} node found with id {node_id!r}",
+            }), 200
+        record = rows[0]
+        node = record.get("n")
+        props = _node_props_to_dict(node) if node else {}
+        columns = list(props.keys())
+        # Use node's actual id when we matched via normalized Customer id
+        display_id = props.get("id", node_id)
+        if isinstance(display_id, (int, float)):
+            display_id = str(display_id)
+        return jsonify({
+            "success": True,
+            "label": label,
+            "id": display_id if display_id else node_id,
+            "columns": columns,
+            "rows": [props],
+            "cypher": cypher,
+            "params": {"id": node_id},
+        })
+    except Exception as e:
+        get_logger(__name__).warning("graph node-details failed", extra={"label": label, "id": node_id, "error": str(e)})
+        return jsonify({
+            "success": False,
+            "label": label,
+            "id": node_id,
+            "columns": [],
+            "rows": [],
+            "error": str(e),
+        }), 200
+
+
+@graph_bp.route("/graph/sentiment", methods=["GET", "POST"])
+def graph_sentiment():
+    """
+    Analyze sentiment of dispute/customer complaint text via LLM (Ollama).
+    GET ?text=... or POST JSON { "text": "..." }.
+    Returns { success, sentiment (free-form from LLM), confidence (0-1), emoji? (optional), error? }.
+    """
+    text = ""
+    if request.method == "POST" and request.is_json:
+        body = request.get_json(silent=True) or {}
+        text = (body.get("text") or "").strip()
+    if not text:
+        text = (request.args.get("text") or "").strip()
+    if not text:
+        return jsonify({
+            "success": False,
+            "sentiment": None,
+            "confidence": None,
+            "emoji": None,
+            "error": "Missing 'text'. Use ?text=... or POST {\"text\": \"...\"}",
+        }), 400
+    sentiment, confidence, emoji, err = _analyze_sentiment_with_ollama(text)
+    if err:
+        return jsonify({
+            "success": False,
+            "sentiment": None,
+            "confidence": None,
+            "emoji": None,
+            "error": err,
+        }), 200
+    payload = {
+        "success": True,
+        "sentiment": sentiment,
+        "confidence": round(confidence, 2),
+    }
+    if emoji:
+        payload["emoji"] = emoji
+    return jsonify(payload), 200
 
 
 @graph_bp.route("/graph/sample", methods=["GET"])
@@ -2457,9 +3351,18 @@ def graph_query_natural():
             payload["llm_time_ms"] = llm_ms
         payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
         logger.info("graph query-natural: ran Cypher successfully", extra={"rows": len(rows), "llm_ms": llm_ms})
+        # Cache question in Redis for reuse (long TTL)
+        redis_client = get_redis()
+        if redis_client and question:
+            try:
+                redis_client.lpush(GRAPH_QUERIES_REDIS_KEY, question)
+                redis_client.ltrim(GRAPH_QUERIES_REDIS_KEY, 0, GRAPH_QUERIES_MAX - 1)
+                redis_client.expire(GRAPH_QUERIES_REDIS_KEY, GRAPH_QUERIES_TTL_SECONDS)
+            except Exception as redis_err:
+                logger.warning("Redis graph queries cache failed", extra={"error": str(redis_err)})
         return jsonify(payload)
     except Exception as e:
-        logger.warning("graph query-natural: Neo4j execution failed", extra={"error": str(e)})
+        logger.warning("graph query-natural: Neo4j execution failed: %s", e, exc_info=True)
         return jsonify({
             "success": False,
             "query": question,
@@ -2470,15 +3373,43 @@ def graph_query_natural():
         }), 200
 
 
+@graph_bp.route("/graph/queries/recent", methods=["GET"])
+def graph_queries_recent():
+    """
+    Return list of recent graph questions (natural language) from Redis cache.
+    Used by the UI to show History with links to reuse.
+    Returns { "queries": ["question1", "question2", ...] } (newest first, deduped).
+    """
+    redis_client = get_redis()
+    if not redis_client:
+        return jsonify({"queries": []}), 200
+    try:
+        raw = redis_client.lrange(GRAPH_QUERIES_REDIS_KEY, 0, 99)
+        if not raw:
+            return jsonify({"queries": []}), 200
+        # Dedupe while preserving order (first occurrence = most recent)
+        seen = set()
+        queries = []
+        for q in raw:
+            q = (q or "").strip()
+            if q and q not in seen:
+                seen.add(q)
+                queries.append(q)
+        return jsonify({"queries": queries})
+    except Exception as e:
+        logger.warning("Redis graph queries recent failed", extra={"error": str(e)})
+        return jsonify({"queries": []}), 200
+
+
 app.register_blueprint(graph_bp)
 
 
 @app.route('/api/suggestions/lucky', methods=['GET'])
 def suggestions_lucky():
     """
-    Return one random suggestion from sg-agent: bank business analytics, customer support,
+    Return one random suggestion from sa-agent: bank business analytics, customer support,
     or regulatory. Uses DataHub schemas (or openint-datahub/schemas.py) and generates
-    a sentence via sg-agent. For Compare "I'm feeling lucky!" button.
+    a sentence via sa-agent. For Compare "I'm feeling lucky!" button.
     """
     try:
         agent_system_path = os.path.abspath(os.path.join(current_dir, '..', 'openint-agents'))
@@ -2488,28 +3419,28 @@ def suggestions_lucky():
         datahub_path = os.path.abspath(os.path.join(_repo_root, 'openint-datahub'))
         if os.path.isdir(datahub_path) and datahub_path not in sys.path:
             sys.path.insert(0, datahub_path)
-        from sg_agent.datahub_client import get_schema_and_source
-        from sg_agent.sentence_generator import generate_one_lucky
-        logger.info("sg-agent: fetching schema for lucky suggestion (DataHub assets and schema)")
+        from sa_agent.datahub_client import get_schema_and_source
+        from sa_agent.sentence_generator import generate_one_lucky
+        logger.info("sa-agent: fetching schema for lucky suggestion (DataHub assets and schema)")
         t0_sg = time.perf_counter()
         schema, schema_source = get_schema_and_source()
         if not schema:
-            logger.warning("sg-agent: no schema available for lucky suggestion")
+            logger.warning("sa-agent: no schema available for lucky suggestion")
             return jsonify({
                 "success": False,
                 "error": "No schema available. Ensure DataHub is running or openint-datahub/schemas.py exists.",
             }), 503
         if schema_source == "datahub":
-            logger.info("sg-agent: using DataHub assets and schema as context for LLM (Ollama)")
+            logger.info("sa-agent: using DataHub assets and schema as context for LLM (Ollama)")
         else:
-            logger.info("sg-agent: using openint-datahub schema as context for LLM (DataHub unavailable)")
-        logger.info("sg-agent: generating sentence (Ollama or template fallback)")
+            logger.info("sa-agent: using openint-datahub schema as context for LLM (DataHub unavailable)")
+        logger.info("sa-agent: generating sentence (Ollama or template fallback)")
         result = generate_one_lucky(schema, prefer_llm=True, schema_source=schema_source)
-        sg_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
+        sa_agent_time_ms = round((time.perf_counter() - t0_sg) * 1000)
         sentence = (result.get("sentence") or "").strip()
         err = result.get("error")
         if err or not sentence:
-            logger.warning("sg-agent: lucky suggestion failed", extra={"error": err or "no sentence"})
+            logger.warning("sa-agent: lucky suggestion failed", extra={"error": err or "no sentence"})
             hint = "Start Ollama (ollama serve) and pull a model, e.g. ollama pull llama3.2. Set OLLAMA_HOST if not localhost:11434."
             return jsonify({
                 "success": False,
@@ -2521,12 +3452,12 @@ def suggestions_lucky():
             "sentence": sentence,
             "category": result.get("category", "Analyst"),
             "source": source,
-            "sg_agent_time_ms": sg_agent_time_ms,
+            "sa_agent_time_ms": sa_agent_time_ms,
         }
         if source == "ollama":
             payload["llm_model"] = os.getenv("OLLAMA_MODEL", "llama3.2")
-        logger.info("sg-agent: lucky suggestion ready", extra={"source": source, "category": result.get("category", "Analyst")})
-        # sg-agent + modelmgmt-agent: optionally annotate the sentence (for Compare "I'm feeling lucky")
+        logger.info("sa-agent: lucky suggestion ready", extra={"source": source, "category": result.get("category", "Analyst")})
+        # sa-agent + modelmgmt-agent: optionally annotate the sentence (for Compare "I'm feeling lucky")
         if sentence and MULTI_MODEL_AVAILABLE and get_analyzer and request.args.get("annotate", "").lower() in ("1", "true", "yes"):
             try:
                 logger.info("modelmgmt-agent: annotating lucky sentence (semantic analysis)")
@@ -2550,13 +3481,13 @@ def suggestions_lucky():
                 payload["annotation"] = {"success": False, "error": str(ann_e)}
         return jsonify(payload)
     except ImportError as e:
-        logger.warning("sg-agent: not available for lucky suggestion", extra={"error": str(e)})
+        logger.warning("sa-agent: not available for lucky suggestion", extra={"error": str(e)})
         return jsonify({
             "success": False,
             "error": "Suggestions agent not available",
         }), 503
     except Exception as e:
-        logger.warning("sg-agent: lucky suggestion failed", extra={"error": str(e)}, exc_info=True)
+        logger.warning("sa-agent: lucky suggestion failed", extra={"error": str(e)}, exc_info=True)
         return jsonify({
             "success": False,
             "error": str(e),

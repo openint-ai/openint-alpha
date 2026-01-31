@@ -19,7 +19,7 @@ type SuggestionItem = { query: string; category: string };
 const EXAMPLE_POOL: SuggestionItem[] = [
   { query: 'Show me transactions for customer 1001', category: 'Customer' },
   { query: 'Customers in California with active accounts', category: 'Customer' },
-  { query: 'Transactions for CUST00000001', category: 'Customer' },
+  { query: 'Transactions for customer 1000000001', category: 'Customer' },
   { query: 'Customers in New York or Texas', category: 'Customer' },
   { query: 'Customers in ZIP code 90210', category: 'Customer' },
   { query: 'Customers with both ACH and wire activity', category: 'Customer' },
@@ -568,7 +568,7 @@ export default function SemanticCompare() {
     modelStats: Record<string, ModelPerformance>;
   }>(() => ({ queryCount: 0, modelStats: {} }));
   /** After "I'm feeling lucky!", which LLM (or template) generated the sentence */
-  const [luckySource, setLuckySource] = useState<{ source: string; llm_model?: string; sg_agent_time_ms?: number } | null>(null);
+  const [luckySource, setLuckySource] = useState<{ source: string; llm_model?: string; sa_agent_time_ms?: number } | null>(null);
 
   const suggestionsByCategory = useMemo(
     () => groupByCategory(EXAMPLE_POOL, exampleSeed),
@@ -638,7 +638,7 @@ export default function SemanticCompare() {
       setLuckySource({
         source: data.source ?? 'template',
         llm_model: data.llm_model,
-        sg_agent_time_ms: data.sg_agent_time_ms,
+        sa_agent_time_ms: data.sa_agent_time_ms,
       });
       setInput(sentence);
       setQuery(sentence);
@@ -736,7 +736,7 @@ export default function SemanticCompare() {
                 onClick={handleLucky}
                 disabled={loading || luckyLoading}
                 className="px-4 py-3 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 disabled:opacity-50 disabled:pointer-events-none transition-colors whitespace-nowrap"
-                title="Get a random sentence from sg-agent (business analytics, customer support, or regulatory)"
+                title="Get a random sentence from sa-agent (business analytics, customer support, or regulatory)"
               >
                 {luckyLoading ? '…' : "I'm feeling lucky!"}
               </button>
@@ -745,14 +745,14 @@ export default function SemanticCompare() {
               <p className="text-xs text-gray-500 flex items-center gap-1.5 mt-1" role="status">
                 <span className="inline-flex items-center justify-center w-4 h-4 rounded bg-gray-100 text-gray-400" aria-hidden>◇</span>
                 Generated with <span className="font-medium text-gray-600">{luckySource.llm_model}</span>
-                {luckySource.sg_agent_time_ms != null && (
+                {luckySource.sa_agent_time_ms != null && (
                   <span
                     className="text-gray-400 font-mono tabular-nums text-[11px]"
-                    title={`sg-agent: ${luckySource.sg_agent_time_ms} ms`}
+                    title={`sa-agent: ${luckySource.sa_agent_time_ms} ms`}
                   >
-                    · {luckySource.sg_agent_time_ms >= 1000
-                      ? `${(luckySource.sg_agent_time_ms / 1000).toFixed(1)}s`
-                      : `${luckySource.sg_agent_time_ms}ms`}
+                    · {luckySource.sa_agent_time_ms >= 1000
+                      ? `${(luckySource.sa_agent_time_ms / 1000).toFixed(1)}s`
+                      : `${luckySource.sa_agent_time_ms}ms`}
                   </span>
                 )}
               </p>

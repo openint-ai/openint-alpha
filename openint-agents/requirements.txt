@@ -23,4 +23,4 @@ pydantic>=2.0.0
 # Orchestration (LangGraph)
 langgraph>=0.2.0
 
-# sg-agent sentence generation uses Ollama (open-source LLM); no extra Python deps (urllib)
+# sa-agent sentence generation uses Ollama (open-source LLM); no extra Python deps (urllib)

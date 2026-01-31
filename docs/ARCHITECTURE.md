@@ -50,7 +50,7 @@ openint-alpha/
 ### openInt-agents
 - **Purpose**: AI agent system with multi-agent collaboration
 - **Responsibilities**:
-  - Agent implementations (search, graph, sg-agent, modelmgmt-agent)
+  - Agent implementations (search, graph, sa-agent, modelmgmt-agent)
   - **modelmgmt-agent**: Model registry (Hugging Face + Redis), sentence semantic annotation; backend uses it for semantic API when agents are loaded
   - Agent communication framework
   - Milvus integration for vector search
@@ -61,7 +61,7 @@ openint-alpha/
 
 All agent communication uses the **A2A (Agent-to-Agent)** protocol (Google A2A spec: Agent Card + message/send). The backend exposes each agent as an A2A endpoint and the LangGraph orchestrator invokes agents via A2A.
 
-1. **A2A Protocol**: Every agent (search_agent, graph_agent, sg-agent, modelmgmt-agent) is exposed as an A2A server; the orchestrator calls agents through `invoke_agent_via_a2a` so all traffic goes over A2A.
+1. **A2A Protocol**: Every agent (search_agent, graph_agent, sa-agent, modelmgmt-agent) is exposed as an A2A server; the orchestrator calls agents through `invoke_agent_via_a2a` so all traffic goes over A2A.
 2. **LangGraph**: Orchestration flow select_agents → run_agents → aggregate; the backend passes an A2A runner into the orchestrator.
 3. **Agent Registry**: Discovery and routing of agents.
 4. **Message Bus**: Fallback for standalone agent runs (no backend).

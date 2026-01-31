@@ -82,6 +82,9 @@ def _select_agent_names(
     if any(word in query_lower for word in ["related", "connected", "path", "link", "dispute", "account", "relationship", "graph"]):
         agents = registry.find_agents_by_capability("graph")
         selected_agents.extend(agents)
+    if any(word in query_lower for word in ["details", "lookup", "information about", "customer id", "transaction id", "dispute id", "enrich"]):
+        agents = registry.find_agents_by_capability("enrich")
+        selected_agents.extend(agents)
     if any(word in query_lower for word in ["suggest", "example question", "what can i ask", "generate sentence", "sample query", "example query", "analyst question", "business analyst"]):
         agents = registry.find_agents_by_capability("suggestions")
         selected_agents.extend(agents)

@@ -47,11 +47,11 @@ Check readiness with: `curl -s http://localhost:3001/api/ready`. If you get 503,
 
 ### A2A (Agent-to-Agent) protocol
 
-**All agent communication** in this project uses the A2A protocol. The backend registers agent instances with the A2A module and passes an A2A runner to the LangGraph orchestrator so every agent call (search_agent, graph_agent, sg-agent, modelmgmt-agent) goes over A2A.
+**All agent communication** in this project uses the A2A protocol. The backend registers agent instances with the A2A module and passes an A2A runner to the LangGraph orchestrator so every agent call (search_agent, graph_agent, sa-agent, modelmgmt-agent) goes over A2A.
 
-- `GET /api/a2a/agents/<agent_id>/card` - Agent Card for discovery (sg-agent, modelmgmt-agent, search_agent, graph_agent).
+- `GET /api/a2a/agents/<agent_id>/card` - Agent Card for discovery (sa-agent, modelmgmt-agent, search_agent, graph_agent).
 - `POST /api/a2a/agents/<agent_id>` - A2A message/send (JSON-RPC 2.0). Same agents as above.
-- `POST /api/a2a/run` - Run the sentence-generation → annotation flow (sg-agent → modelmgmt-agent).
+- `POST /api/a2a/run` - Run the sentence-generation → annotation flow (sa-agent → modelmgmt-agent).
 
 ## Model loading and Redis
 

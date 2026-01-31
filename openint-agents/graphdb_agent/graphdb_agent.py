@@ -1,5 +1,5 @@
 """
-Graph Agent
+GraphDB Agent
 Performs relationship and path queries in Neo4j graph database.
 Uses natural language + Neo4j schema with an LLM (Ollama) to generate Cypher when available;
 falls back to keyword-based template matching otherwise.
@@ -120,6 +120,7 @@ Rules:
 - In RETURN, only use the node variables c, d, t and their properties: c.id, t.id, d.id, t.amount, t.type, d.amount_disputed, d.dispute_status, t.currency, etc. Never use a relationship variable in RETURN (e.g. no r.target; use t.id for transaction_id).
 - Relationship types: HAS_TRANSACTION (Customer->Transaction), OPENED_DISPUTE (Customer->Dispute), REFERENCES (Dispute->Transaction).
 - Every variable in RETURN must appear in MATCH. Add LIMIT 50 for exploration queries.
+- CRITICAL: All customer, transaction, and dispute IDs are exactly 10-digit numbers (e.g. 1000000001, 1000001234). Use them in Cypher as strings: c.id = '1000000001'. Never use prefixes like CUST or TX. Never treat IDs as amounts.
 - Return ONLY the Cypher statement, nothing else.
 
 User question: {question}"""
@@ -165,7 +166,7 @@ def _path_summary(record: Dict[str, Any]) -> str:
     return " | ".join(parts)
 
 
-class GraphAgent(BaseAgent):
+class GraphdbAgent(BaseAgent):
     """
     Agent for graph/relationship queries in Neo4j.
     Registers capability "graph" for routing by the orchestrator.
@@ -189,7 +190,7 @@ class GraphAgent(BaseAgent):
             )
         ]
         super().__init__(
-            name="graph_agent",
+            name="graphdb-agent",
             description="Performs graph and relationship queries in Neo4j (customers, transactions, disputes)",
             capabilities=capabilities,
         )
@@ -238,9 +239,9 @@ class GraphAgent(BaseAgent):
                 try:
                     records = self._client.run(cypher) or []
                     cypher_used = cypher
-                    logger.info("GraphAgent: ran LLM-generated Cypher (%d rows)", len(records))
+                    logger.info("GraphdbAgent: ran LLM-generated Cypher (%d rows)", len(records))
                 except Exception as e:
-                    logger.warning("GraphAgent: LLM Cypher execution failed, falling back to templates", extra={"error": str(e)})
+                    logger.warning("GraphdbAgent: LLM Cypher execution failed, falling back to templates", extra={"error": str(e)})
                     records = []
             # 2) Fallback: keyword-based template matching
             if not records:
@@ -302,7 +303,7 @@ class GraphAgent(BaseAgent):
                 th.start()
                 th.join(timeout=self.GRAPH_QUERY_TIMEOUT)
                 if th.is_alive():
-                    logger.warning("GraphAgent query timed out after %ss", self.GRAPH_QUERY_TIMEOUT)
+                    logger.warning("GraphdbAgent query timed out after %ss", self.GRAPH_QUERY_TIMEOUT)
                     records = []
                     error_holder.append("Graph query timed out (Neo4j slow or unreachable)")
 

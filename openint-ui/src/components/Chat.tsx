@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from 'react';
 import { chat, previewSemanticAnalysis, previewSemanticAnalysisMulti, type ChatSource, type ChatDebug, type DebugSemantic, type SemanticPreviewModelResult } from '../api';
 import { getLogger } from '../observability';
-import { parseForHighlight, getHighlightClass, type HighlightPart } from '../utils/semanticHighlight';
+import { AnswerRenderer } from './AnswerRenderer';
 import {
   parseStructuredContent,
   getColumnOrder,
@@ -17,7 +17,7 @@ const EXAMPLE_POOL: SuggestionItem[] = [
   // Customer
   { query: 'Show me transactions for customer 1001', category: 'Customer' },
   { query: 'Customers in California with active accounts', category: 'Customer' },
-  { query: 'Transactions for CUST00000001', category: 'Customer' },
+  { query: 'Transactions for customer 1000000001', category: 'Customer' },
   { query: 'Customers in New York or Texas', category: 'Customer' },
   { query: 'Customers in ZIP code 90210', category: 'Customer' },
   { query: 'Customers with both ACH and wire activity', category: 'Customer' },
@@ -756,163 +756,6 @@ function DebugToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
 }
 
 
-/** Renders a single line of text with semantic highlights. */
-function LineWithHighlights({ line }: { line: string }) {
-  const safeLine = line != null && typeof line === 'string' ? line : '';
-  const normalized = safeLine.replace(/\*\*(.+?)\*\*/g, '$1');
-  const parts = parseForHighlight(normalized);
-  return (
-    <>
-      {parts.map((p: HighlightPart, i: number) =>
-        p.type === 'text' ? (
-          <span key={i}>{p.text}</span>
-        ) : (
-          <span key={i} className={getHighlightClass(p.type)}>
-            {p.text}
-          </span>
-        )
-      )}
-    </>
-  );
-}
-
-const LABEL_VALUE_SEP = ' | ';
-
-/** Split a single "Label | Value" segment into { label, value }; if no " | ", treat whole as value. */
-function parseLabelValue(segment: string): { label: string; value: string } {
-  const idx = segment.indexOf(LABEL_VALUE_SEP);
-  if (idx >= 0) {
-    return { label: segment.slice(0, idx).trim(), value: segment.slice(idx + LABEL_VALUE_SEP.length).trim() };
-  }
-  return { label: '', value: segment.trim() };
-}
-
-/** Parse backend answer into intro line(s) and sections with title + bullet rows (each bullet = one record of Label | Value pairs). */
-function parseAnswerSections(text: string): {
-  intro: string[];
-  sections: { title: string; rows: { label: string; value: string }[][] }[];
-} {
-  const safeText = text != null && typeof text === 'string' ? text : '';
-  const lines = safeText.split(/\n/).filter((l) => l.trim() !== '');
-  const intro: string[] = [];
-  const sections: { title: string; rows: { label: string; value: string }[][] }[] = [];
-  let currentSection: { title: string; rows: { label: string; value: string }[][] } | null = null;
-  for (const line of lines) {
-    const trimmed = line.trim();
-    const bulletMatch = line.match(/^\s*•\s+(.*)$/);
-    const boldMatch = trimmed.match(/^\*\*(.+?)\*\*(?:\s*\(\d+\))?\s*$/);
-    if (boldMatch && !trimmed.startsWith('Based on')) {
-      currentSection = { title: trimmed, rows: [] };
-      sections.push(currentSection);
-    } else if (bulletMatch && currentSection) {
-      const cells = bulletMatch[1].split(' · ').map((c) => c.trim()).filter(Boolean);
-      const pairs = cells.map(parseLabelValue);
-      currentSection.rows.push(pairs);
-    } else if (!currentSection) {
-      intro.push(trimmed);
-    }
-  }
-  return { intro, sections };
-}
-
-/** Semantic styling for values (amounts, IDs, dates). */
-function getValueCellClass(value: string): string {
-  const isAmount = /^-?\$?[\d,]+(\.\d{2})?/.test(value) || /^-?[\d,]+\.\d{2}$/.test(value);
-  const isId = /^CUST|^ACH|^WIRE|^CHK|^CRD|^DBT/i.test(value) || /^\(?CUST[\d)]+$/.test(value);
-  const isDate = /^\d{4}-\d{2}-\d{2}/.test(value);
-  return isAmount
-    ? 'text-amber-800 font-medium'
-    : isId
-      ? 'text-indigo-800 font-mono text-xs'
-      : isDate
-        ? 'text-emerald-800'
-        : '';
-}
-
-/** Build ordered column list from section rows: first record's order, then any extra labels from others. */
-function sectionColumns(rows: { label: string; value: string }[][]): string[] {
-  const seen = new Set<string>();
-  const order: string[] = [];
-  for (const record of rows) {
-    for (const { label } of record) {
-      const key = label || '\u200b'; // empty label placeholder
-      if (!seen.has(key)) {
-        seen.add(key);
-        order.push(label);
-      }
-    }
-  }
-  return order;
-}
-
-/** Renders answer as intro + sections; each section is one table with fields as columns, one row per record. */
-function AnswerWithHighlights({ text }: { text: string }) {
-  const { intro, sections } = parseAnswerSections(text);
-  return (
-    <div className="space-y-4 text-gray-800 leading-relaxed">
-      {intro.map((line, i) => (
-        <div key={i} className="whitespace-pre-wrap">
-          <LineWithHighlights line={line} />
-        </div>
-      ))}
-      {sections.map((sec, si) => {
-        const columns = sectionColumns(sec.rows);
-        const recordToMap = (record: { label: string; value: string }[]) => {
-          const m = new Map<string, string>();
-          for (const { label, value } of record) m.set(label || '\u200b', value);
-          return m;
-        };
-        return (
-          <div key={si} className="mt-4 first:mt-0">
-            <div className="font-semibold text-gray-900 mb-2">
-              <LineWithHighlights line={sec.title} />
-            </div>
-            <div className="w-full overflow-x-auto overflow-y-hidden rounded-lg border border-surface-200 bg-white shadow-sm -mx-1 sm:mx-0">
-              <table className="w-full border-collapse text-sm min-w-0">
-                <thead>
-                  <tr className="bg-surface-100 border-b border-surface-200">
-                    {columns.map((col, ci) => (
-                      <th
-                        key={ci}
-                        className="px-3 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap min-w-[6rem]"
-                      >
-                        {col || '—'}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sec.rows.map((record, ri) => {
-                    const map = recordToMap(record);
-                    return (
-                      <tr
-                        key={ri}
-                        className={ri % 2 === 0 ? 'bg-surface-50/50' : 'bg-white'}
-                      >
-                        {columns.map((col, ci) => {
-                          const value = map.get(col || '\u200b') ?? '—';
-                          return (
-                            <td
-                              key={ci}
-                              className={`px-3 py-2 text-sm text-gray-800 align-top break-words min-w-[5rem] ${getValueCellClass(value)}`}
-                            >
-                              {value}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 /** Subtle visualization: sentence → embedding vector → Vector DB (shown under each answer) */
 function EmbeddingVisualization({ dims, model }: { dims: number; model?: string }) {
   const safeDims = typeof dims === 'number' && Number.isFinite(dims) ? dims : 0;
@@ -974,7 +817,7 @@ function groupSourcesByEntityType(sources: ChatSource[]): GroupedRecords[] {
 function getTableValueClass(value: unknown): string {
   const s = value == null ? '' : String(value);
   const isAmount = /^-?\$?[\d,]+(\.\d{2})?/.test(s) || /^-?[\d,]+\.\d{2}$/.test(s);
-  const isId = /^CUST|^ACH|^WIRE|^CHK|^CRD|^DBT/i.test(s) || /^\(?CUST[\d)]+$/.test(s);
+  const isId = /^\d{10}$/.test(s) || /^CUST|^ACH|^WIRE|^CHK|^CRD|^DBT/i.test(s) || /^\(?CUST[\d)]+$/.test(s);
   const isDate = /^\d{4}-\d{2}-\d{2}/.test(s);
   if (isAmount) return 'text-amber-800 font-semibold bg-amber-50/80';
   if (isId) return 'text-indigo-800 font-mono text-xs bg-indigo-50/60';
@@ -1850,7 +1693,7 @@ export default function ChatPage() {
                         </div>
                       )}
                       <div className="text-gray-800 leading-relaxed">
-                        <AnswerWithHighlights text={assistant.content ?? ''} />
+                        <AnswerRenderer text={assistant.content ?? ''} />
                       </div>
                       {assistant.embeddingDims != null && (
                         <EmbeddingVisualization dims={assistant.embeddingDims} model={assistant.embeddingModel} />
