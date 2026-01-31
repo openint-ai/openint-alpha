@@ -1,25 +1,32 @@
-FROM python:3.12-slim
+# === Builder stage: install system deps + Python packages ===
+FROM python:3.12-slim AS builder
 
-WORKDIR /app
-
-# Install system deps for building Python packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for layer caching
 COPY openint-backend/requirements.txt /tmp/backend-req.txt
 COPY openint-agents/requirements.txt /tmp/agents-req.txt
 COPY openint-vectordb/requirements.txt /tmp/vectordb-req.txt
 COPY openint-graph/requirements.txt /tmp/graph-req.txt
 COPY openint-testdata/requirements.txt /tmp/testdata-req.txt
 
-RUN pip install --no-cache-dir \
+# Install CPU-only torch first (saves ~1.5GB vs full torch), then remaining deps
+RUN pip install --no-cache-dir --prefix=/install torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir --prefix=/install \
     -r /tmp/backend-req.txt \
     -r /tmp/agents-req.txt \
     -r /tmp/vectordb-req.txt \
     -r /tmp/graph-req.txt \
     -r /tmp/testdata-req.txt
+
+# === Runtime stage: no build-essential, no pip cache, smaller image ===
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Copy only the installed Python packages from the builder
+COPY --from=builder /install /usr/local
 
 # Copy application source
 COPY openint-backend/ /app/openint-backend/

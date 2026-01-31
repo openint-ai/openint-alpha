@@ -7,6 +7,13 @@ __pycache__
 .env
 certs/
 docs/
+samples/
+tests/
+helm/
+scripts/
+openint-mcp/
+*.md
+LICENSE
 *.log
 *.pid
 .agent_system.log
@@ -16,6 +23,9 @@ docs/
 .backend.pid
 openint-ui/node_modules
 openint-ui/dist
+openint-ui/public
+.pytest_cache
+.mypy_cache
 .venv
 venv
 *.egg-info
