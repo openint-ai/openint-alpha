@@ -35,14 +35,14 @@ class Neo4jClient:
             uri: Bolt URI (default NEO4J_URI or bolt://localhost:7687)
             user: Username (default NEO4J_USER or neo4j)
             password: Password (default NEO4J_PASSWORD or datahub)
-            database: Database name (default NEO4J_DATABASE or graph.db for DataHub Neo4j)
+            database: Database name (default NEO4J_DATABASE or neo4j; use graph.db for DataHub compose)
         """
         if not NEO4J_AVAILABLE:
             raise ImportError("neo4j driver not available. Install with: pip install neo4j")
         self._uri = uri or os.getenv("NEO4J_URI", "bolt://localhost:7687")
         self._user = user or os.getenv("NEO4J_USER", "neo4j")
         self._password = password or os.getenv("NEO4J_PASSWORD", "datahub")
-        self._database = database or os.getenv("NEO4J_DATABASE", "graph.db")
+        self._database = database or os.getenv("NEO4J_DATABASE", "neo4j")
         self._driver = None
 
     def connect(self) -> None:

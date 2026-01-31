@@ -93,7 +93,7 @@ cd openint-ui && npm run dev
 # Start DataHub services
 docker-compose -f docker-compose.datahub.yml up -d
 
-# Ingest data metadata
+# Ingest testdata metadata
 cd openint-datahub
 python ingest_metadata.py
 

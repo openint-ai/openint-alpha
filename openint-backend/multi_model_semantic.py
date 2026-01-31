@@ -42,7 +42,7 @@ def _get_schema_for_semantics() -> Optional[Dict[str, Dict[str, Any]]]:
         if openint_agents.exists() and str(openint_agents) not in sys.path:
             sys.path.insert(0, str(openint_agents))
         try:
-            from sg_agent.datahub_client import get_schema
+            from sa_agent.datahub_client import get_schema
             schema = get_schema()
             if schema:
                 return schema

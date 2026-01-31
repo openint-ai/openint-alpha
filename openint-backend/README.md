@@ -64,7 +64,7 @@ Set environment variables in `.env`:
 - `PORT`: Backend port (default: 5000)
 - `CORS_ORIGINS`: Allowed CORS origins (default: http://localhost:3000)
 
-**Neo4j (GraphAgent):** For graph/relationship queries, set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, and optionally `NEO4J_DATABASE` (e.g. `graph.db` when using DataHub’s Neo4j). See `openint-graph/README.md`.
+**Neo4j (GraphAgent):** For graph/relationship queries, set `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, and optionally `NEO4J_DATABASE` (default `neo4j`; use `graph.db` when using DataHub’s Neo4j). See `openint-graph/README.md`.
 
 **Hugging Face:** Set `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`) for higher rate limits and faster model downloads; it also suppresses the "unauthenticated requests" warning. Create a token at https://huggingface.co/settings/tokens and add `HF_TOKEN=your_token` to `.env` or your environment.
 

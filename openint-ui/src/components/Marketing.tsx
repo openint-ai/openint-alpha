@@ -42,10 +42,10 @@ export default function Marketing() {
           <div className="grid lg:grid-cols-2 gap-10 lg:gap-14 items-center">
             <div>
               <p className="text-brand-300 text-sm font-medium tracking-wider uppercase mb-3">
-                Intelligent data & agents
+                OpenInt.AI Agents
               </p>
               <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold text-white tracking-tight leading-[1.1]">
-                Agentic AI for your Data @ your fingertips
+                Search, understand, and act on your data
               </h1>
               <p className="mt-5 text-lg text-slate-300 max-w-xl">
                 openInt brings vector search, semantic annotation, agent-to-agent workflows, and graph exploration into one platform. Try the products below.

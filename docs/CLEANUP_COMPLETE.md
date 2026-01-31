@@ -81,7 +81,7 @@ openint-alpha/
 ├── openint-testdata/     # Test Data Generation
 ├── openint-ui/           # Frontend
 ├── shared/               # Shared Utilities
-├── data/                 # Generated Data
+├── testdata/             # Test Data
 ├── samples/              # Sample Files
 ├── .archive/             # Archived Documentation
 ├── .agents/              # Pinecone Docs
