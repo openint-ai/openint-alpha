@@ -93,4 +93,55 @@
   .enrich-collab-done {
     animation: enrich-collab-done 2s ease-in-out infinite;
   }
+
+  /* Answer / Enrichment UX: human-readable highlights and animations */
+  @keyframes answer-reveal {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  .answer-reveal {
+    animation: answer-reveal 0.5s ease-out forwards;
+  }
+  @keyframes enriched-glow {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(6, 182, 212, 0.3); }
+    50% { box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.5), 0 0 12px rgba(6, 182, 212, 0.2); }
+  }
+  .enriched-id-highlight {
+    animation: enriched-glow 2.5s ease-in-out 2;
+  }
+  @keyframes highlight-attention {
+    0% { opacity: 0.7; }
+    50% { opacity: 1; }
+    100% { opacity: 0.7; }
+  }
+  .highlight-attention {
+    animation: highlight-attention 1.5s ease-in-out 1;
+  }
+  @keyframes badge-enter {
+    from {
+      opacity: 0;
+      transform: scale(0.92);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  .enriched-badge-enter {
+    opacity: 0;
+    animation: badge-enter 0.4s ease-out forwards;
+  }
+  @keyframes sparkle-twinkle {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.15); }
+  }
+  .sparkle-twinkle {
+    animation: sparkle-twinkle 1.2s ease-in-out 2;
+  }
 }

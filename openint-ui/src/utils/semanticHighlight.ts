@@ -6,7 +6,8 @@ export type HighlightPart = { type: 'text' | 'entity' | 'amount' | 'id' | 'date'
 
 const PATTERNS: { re: RegExp; type: HighlightPart['type'] }[] = [
   { re: /^-?\$?[\d,]+(?:\.\d{2})?\s*(?:USD|EUR|GBP)?/i, type: 'amount' },
-  { re: /\b\d{10,}\b/, type: 'id' }, // 10+ digit IDs (customer_id, transaction_id, dispute_id)
+  { re: /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i, type: 'id' }, // UUID (transaction_id)
+  { re: /\b\d{9,19}\b/, type: 'id' }, // BIGINT/INT (customer_id, dispute_id)
   { re: /\bCUST\d+\b/i, type: 'id' },
   { re: /\b(?:ACH|WIRE|CREDIT|DEBIT|CHECK|DBT|DSP|DISPUTE)\d+\b/i, type: 'id' },
   { re: /\b\d{4}-\d{2}-\d{2}\b/, type: 'date' },
@@ -39,17 +40,17 @@ export function parseForHighlight(text: string): HighlightPart[] {
   return parts;
 }
 
-/** Clean CSS highlight colors for answer text (amounts, IDs, dates, locations). */
+/** Clean CSS highlight colors for answer text (amounts, IDs, dates, locations). Human-readable, attention-grabbing. */
 export function getHighlightClass(type: string): string {
   switch (type) {
     case 'amount':
-      return 'text-amber-700 font-semibold bg-amber-50/90 px-1 py-0.5 rounded';
+      return 'text-amber-800 font-semibold bg-amber-100/90 px-1.5 py-0.5 rounded-md border border-amber-200/60 shadow-sm highlight-attention';
     case 'id':
-      return 'text-indigo-700 font-mono text-[13px] bg-indigo-50/80 px-1 py-0.5 rounded';
+      return 'text-indigo-800 font-mono text-[13px] bg-indigo-50 px-1.5 py-0.5 rounded-md border border-indigo-200/60';
     case 'date':
-      return 'text-emerald-700 bg-emerald-50/80 px-1 py-0.5 rounded';
+      return 'text-emerald-800 bg-emerald-50/90 px-1.5 py-0.5 rounded-md border border-emerald-200/60';
     case 'location':
-      return 'text-blue-700 bg-blue-50/80 px-1 py-0.5 rounded';
+      return 'text-blue-800 bg-blue-50/90 px-1.5 py-0.5 rounded-md border border-blue-200/60';
     case 'entity':
       return 'text-slate-800 font-medium';
     default:

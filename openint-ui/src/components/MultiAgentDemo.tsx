@@ -517,19 +517,24 @@ export default function MultiAgentDemo() {
               />
             </section>
             {(data?.enriched_entities?.length ?? 0) > 0 && (
-              <section className="space-y-3" aria-label="Enriched entities">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500 text-white shadow-sm">
+              <section className="space-y-3 answer-reveal" aria-label="Enriched entities">
+                <div className="flex items-center gap-3">
+                  <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-500 to-sky-500 text-white shadow-md shadow-cyan-200/50">
                     <EnrichAgentIcon className="w-4 h-4" />
                   </span>
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-700 tracking-tight">Enriched by enrich-agent</h3>
-                    <p className="text-xs text-slate-500 mt-0.5">IDs looked up in Neo4j (highlighted in answer below)</p>
+                    <h3 className="text-sm font-semibold text-slate-800 tracking-tight flex items-center gap-2">
+                      Enriched entities
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-cyan-100 text-cyan-700 text-[10px] font-medium">
+                        ✨ {data.enriched_entities?.length ?? 0} looked up
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">IDs enriched by graph lookup — highlighted in the answer below</p>
                   </div>
                 </div>
-                <div className="rounded-xl border border-cyan-200/60 bg-gradient-to-br from-cyan-50 to-cyan-50/50 p-4 shadow-sm">
+                <div className="rounded-xl border border-cyan-200/70 bg-gradient-to-br from-cyan-50 via-sky-50/50 to-cyan-50 p-4 shadow-sm">
                   <div className="flex flex-wrap gap-2">
-                    {(data.enriched_entities ?? []).map((eid) => {
+                    {(data.enriched_entities ?? []).map((eid, idx) => {
                       const detail = data.enriched_details?.[eid];
                       const label = (detail?.label ?? 'Entity').toLowerCase();
                       const isCustomer = label === 'customer';
@@ -540,15 +545,17 @@ export default function MultiAgentDemo() {
                       return (
                         <span
                           key={eid}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/90 border border-cyan-200 text-sm text-cyan-800"
+                          className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl bg-white/95 border border-cyan-200/80 text-sm text-slate-800 shadow-sm hover:shadow-md hover:border-cyan-300/80 transition-all duration-200 enriched-badge-enter`}
+                          style={{ animationDelay: `${idx * 60}ms` }}
                         >
-                          <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded ${iconBg} text-white`}>
-                            {isCustomer && <EnrichEntityCustomerIcon className="w-3 h-3" />}
-                            {isTransaction && <EnrichEntityTransactionIcon className="w-3 h-3" />}
-                            {isDispute && <EnrichEntityDisputeIcon className="w-3 h-3" />}
-                            {!isCustomer && !isTransaction && !isDispute && <EnrichAgentIcon className="w-3 h-3" />}
+                          <span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-lg ${iconBg} text-white shadow-sm`}>
+                            {isCustomer && <EnrichEntityCustomerIcon className="w-3.5 h-3.5" />}
+                            {isTransaction && <EnrichEntityTransactionIcon className="w-3.5 h-3.5" />}
+                            {isDispute && <EnrichEntityDisputeIcon className="w-3.5 h-3.5" />}
+                            {!isCustomer && !isTransaction && !isDispute && <EnrichAgentIcon className="w-3.5 h-3.5" />}
                           </span>
-                          <span>{displayText}</span>
+                          <span className="font-medium">{displayText}</span>
+                          <span className="text-cyan-500 sparkle-twinkle" title="Enriched by graph lookup">✨</span>
                         </span>
                       );
                     })}
@@ -556,13 +563,25 @@ export default function MultiAgentDemo() {
                 </div>
               </section>
             )}
-            <section className="space-y-3" aria-label="Answer">
-              <div className="flex items-center gap-2">
-                <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-500 text-white text-xs font-bold shadow-sm">{data?.enriched_entities?.length ? '4' : '3'}</span>
-                <h3 className="text-sm font-semibold text-slate-700 tracking-tight">Answer</h3>
-                <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-0.5 rounded-md tabular-nums">{String(data?.answer ?? '').length} ch</span>
+            <section className="space-y-3 answer-reveal" aria-label="Answer">
+              <div className="flex items-center gap-3">
+                <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-brand-500 to-indigo-600 text-white text-sm font-bold shadow-md shadow-brand-200/50">
+                  {data?.enriched_entities?.length ? '4' : '3'}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <h3 className="text-sm font-semibold text-slate-800 tracking-tight flex items-center gap-2">
+                    Answer
+                    {(data?.enriched_entities?.length ?? 0) > 0 && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-cyan-600 bg-cyan-50 px-2 py-0.5 rounded-full">
+                        <span className="sparkle-twinkle">✨</span> enriched
+                      </span>
+                    )}
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">Insights with highlighted entities — click icons for details</p>
+                </div>
+                <span className="text-xs font-medium text-slate-400 bg-slate-100 px-2 py-1 rounded-lg tabular-nums">{String(data?.answer ?? '').length} ch</span>
               </div>
-              <div className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-slate-50 via-white to-slate-50/50 p-5 sm:p-6 shadow-sm min-h-[4rem]">
+              <div className="rounded-xl border border-slate-200/80 bg-gradient-to-br from-white via-slate-50/30 to-white p-5 sm:p-6 shadow-md min-h-[4rem] ring-1 ring-slate-100/80">
                 <div className="text-[15px] sm:text-base leading-[1.7] max-w-[75ch]">
                   <AnswerRenderer
                     text={data?.answer ?? ''}
